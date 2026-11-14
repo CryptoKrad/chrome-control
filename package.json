@@ -1,0 +1,14 @@
+{
+  "name": "chrome-control",
+  "version": "0.2.0",
+  "private": true,
+  "description": "Drive your own signed-in Chrome window on macOS from a script or an AI agent, through Accessibility: no extension, no debugging port, no copied cookies. An alternative to Claude in Chrome.",
+  "license": "MIT",
+  "type": "module",
+  "bin": { "chrome-control": "chrome-control.mjs" },
+  "os": ["darwin"],
+  "engines": { "node": ">=22" },
+  "repository": { "type": "git", "url": "git+https://github.com/CryptoKrad/chrome-control.git" },
+  "keywords": ["chrome", "macos", "accessibility", "browser-automation", "ai-agents", "claude-code", "cua-driver"],
+  "scripts": { "test": "node --test" }
+}
