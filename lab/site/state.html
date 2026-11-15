@@ -1,0 +1,6 @@
+<!doctype html><meta charset="utf-8"><title>state</title><body><script>
+  const set = new URLSearchParams(location.search).get("set");
+  if (set && !localStorage.ls) localStorage.ls = "LS-" + set;
+  if (set && !/ck=/.test(document.cookie)) document.cookie = "ck=CK-" + set + "; path=/; max-age=86400";
+  document.title = "state ls=" + (localStorage.ls || "none") + " ck=" + (/ck=([\w-]+)/.exec(document.cookie)?.[1] || "none");
+</script>Open the console; the title carries the state.</body>
