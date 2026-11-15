@@ -1,11 +1,14 @@
 // chrome-control: it finds the profile's own Chrome window, presses an element only by a label that is on the page
 // once, never fills a secret field, stops at a password or passkey prompt, writes a key into .env only when exactly one
 // text on the page is that key, refuses to act on a tree Chrome has not updated, opens a page only in a new tab of the
-// kept window and never puts an app back in front.
+// kept window and never puts an app back in front. It prints a page as short lines and an action as what it changed,
+// refuses a window Chrome treats as hidden, and keeps one window for one session.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
-import { windowOf, keptWindow, elementOf, onlyMatch, withEnv, tabOf, OWNER_STEP, ownChrome, pageOf, sameTitle, rowOf, ofProfile, profileOf, staleOf } from "./chrome-control.mjs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+import { windowOf, keptWindow, elementOf, onlyMatch, withEnv, tabOf, OWNER_STEP, ownChrome, pageOf, sameTitle, rowOf, ofProfile, profileOf, staleOf, stillStale, suggestionOf, oneLine, compact, changed, covered, claim, lock, FLAG, USAGE } from "./chrome-control.mjs";
 
 const src = readFileSync(new URL("./chrome-control.mjs", import.meta.url), "utf8");
 const tree = [
@@ -64,7 +67,12 @@ test("an element is pressed only by a label that is on the page once, and a pres
   const domains = ['      - [107] AXStaticText = "example.ca" [actions=[press,showmenu,scrolltovisible]]', '        - [108] AXStaticText = "example.ca" [actions=[showmenu,scrolltovisible]]'].join("\n");
   assert.equal(elementOf(domains, "example.ca", "AXStaticText"), 107);
   assert.equal(elementOf(menus.replace("AXButton", "AXMenuItem"), "New Tab"), null);   // three that can be pressed: none
-  assert.match(src, /elementOf\(scope, a, cmd === "press" \? b : c \?\? ""\)/);
+  assert.equal(elementOf(menus, "New Tab", "button"), 266);   // the role as `read` prints it
+  assert.equal(elementOf(menus, "New Tab", "axbutton"), 266);
+  assert.equal(elementOf(tree, "Generate API\u2026"), 39);   // a label `read` cut at 160 characters
+  assert.equal(elementOf(menus, "New\u2026"), null);   // an opening on three lines: none
+  assert.match(src, /const label = cmd === "key" \? b : a, role = \(cmd === "press" \? b : c\) \?\? ""/);
+  assert.match(src, /const idx = label \? elementOf\(scope, label, role\) : null/);
 });
 
 test("a key goes to .env only when exactly one text is the key, and the other lines stay", () => {
@@ -95,13 +103,36 @@ test("a password or passkey prompt is the user's step, and a secret field is nev
   assert.match("Complete sign-in using your passkey", OWNER_STEP);
   assert.match("Enter your password", OWNER_STEP);
   assert.doesNotMatch("Choose an account", OWNER_STEP);
-  assert.match(src, /cmd === "fill" && SECRET_FIELD\.test\(a\)/);
-  assert.doesNotMatch(src, /Cookies|Login Data|--user-data-dir=/);   // nothing is copied from the profile, and no Chrome is started on a copy
+  assert.match(src, /\(cmd === "fill" \|\| cmd === "type"\) && SECRET_FIELD\.test\(a\)/);
+  assert.doesNotMatch(src, /Cookies|Login Data|cpSync|copyFile/);   // nothing is copied from a profile
+  // the only Chrome the tool starts is its own, on an empty folder of its own, in the background
+  assert.equal(src.match(/--user-data-dir=/g).length, 3);
+  assert.match(src, /const dir = path\.join\(BROWSERS, a\);/);
+  assert.match(src, /additional_arguments: \[`--user-data-dir=\$\{dir\}`, "--no-first-run", "--no-default-browser-check", FLAG,/);
+  assert.match(src, /p\.args\.includes\(`--user-data-dir=\$\{path\.join\(BROWSERS, browser\)\} `\)/);
 });
 
 test("open reaches only your own Chrome by pid, as a new tab of the kept window; nothing is put back", () => {
-  // measured with several Chrome windows open: a launch raised Chrome, and a background Return is refused
-  assert.doesNotMatch(src, /"-na"|--new-window|launch_app|bring_to_front|activate|"-a", "Google Chrome"|press_key|"Address and search bar"|application id|Application\("Google Chrome"\)/);
+  // measured: a launch raised Chrome, a menu item is delivered in the foreground, and JavaScript for Automation's
+  // Application(<pid>) reached the default Chrome, not the pid it was given
+  assert.doesNotMatch(src, /"-na"|--new-window|bring_to_front|activate|invoke_menu|"-a", "Google Chrome"|application id|\bApplication\(/);
+  assert.equal(src.match(/launch_app/g).length, 1);   // only `launch`, a new instance on the tool's own folder: your own Chrome is never launched into
+  assert.match(src, /cua\("launch_app", \{ bundle_id: "com\.google\.Chrome", creates_new_application_instance: true,/);
+  // the address goes into a new tab's bar, and the bar's own suggestion for it is pressed in the suggestions' window: no
+  // key is sent. The list as the lab gave it, 2026-11-14:
+  const list = ['- [0] AXWindow [actions=[raise]]', '  - [1] AXWebArea "Omnibox Popup" [actions=[showmenu,scrolltovisible]]', '    - [2] AXList [actions=[showmenu,scrolltovisible]]',
+    '      - [3] AXStaticText = "http://127.0.0.1:8765/index.html, 1 of 2" [actions=[press,showmenu,scrolltovisible]]',
+    '      - [4] AXStaticText = "http://127.0.0.1:8765/index.html search, 2 of 2" [actions=[press,showmenu,scrolltovisible]]'].join("\n");
+  assert.equal(suggestionOf(list, "http://127.0.0.1:8765/index.html"), 3);
+  assert.equal(suggestionOf(list, "http://127.0.0.1:8765/"), null);   // another address is never pressed
+  assert.equal(suggestionOf(list.replace(/^.*1 of 2.*\n/m, ""), "http://127.0.0.1:8765/index.html"), null);   // the search row alone is not the address
+  assert.equal(suggestionOf('      - [3] AXStaticText = "https://example.com, 1 of 2" [actions=[press,showmenu]]', "https://example.com/"), 3);   // a bare origin is listed without its slash
+  assert.equal(suggestionOf(`${list}\n${list}`, "http://127.0.0.1:8765/index.html"), null);   // offered twice: none
+  assert.equal(suggestionOf(list.replace(/press,/g, ""), "http://127.0.0.1:8765/index.html"), null);
+  assert.match(src, /const row = \/AXWebArea "Omnibox Popup"\/\.test\(list\.tree_markdown \?\? ""\) \? suggestionOf\(list\.tree_markdown, a\) : null;/);
+  assert.match(src, /if \(rows\.length === 1\) cua\("click", \{ \.\.\.rows\[0\], action: "press" \}\);\n    else if \(/);
+  assert.match(src, /if \(bar === null \|\| titleOf\(s\) !== "New Tab"\) \{[^\n]*process\.exit\(1\)/);
+  assert.match(src, /const id = appleEvent\("id", t\.pid, "New Tab"\), r = \/\^\\d\+\$\/\.test\(id\) \? appleEvent\("go", t\.pid, id, a\) : id;/);   // the last resort, said when taken
   assert.match(src, /applicationWithProcessIdentifier\(Number\(pid\)\)/);
   assert.match(src, /if \(hits\.length !== 1\) return/);
   assert.match(src, /if \(!String\(ObjC\.unwrap\(tab\.valueForKey\("URL"\)\)\)\.startsWith\("chrome:\/\/newtab"\)\) return/);   // only a new tab is navigated
@@ -146,10 +177,10 @@ test("Chrome's elided window name matches the full title only by its opening, it
 });
 
 test("your Chrome is the one without its own --user-data-dir (an automation Chrome has one)", () => {
-  const own = { pid: 812, args: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" };
+  const own = { pid: 4242, args: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" };
   const bot = { pid: 4242, args: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome --user-data-dir=/tmp/agent-profile --remote-debugging-port=0" };
-  assert.equal(ownChrome([own, bot]), 812);
-  assert.equal(ownChrome([bot, own]), 812);
+  assert.equal(ownChrome([own, bot]), 4242);
+  assert.equal(ownChrome([bot, own]), 4242);
   assert.equal(ownChrome([bot]), null);
   assert.equal(ownChrome([own, { ...own, pid: 9 }]), null);
 });
@@ -162,5 +193,122 @@ test("a tree Chrome has not updated is told by the tab's title, and no press, fi
   assert.equal(staleOf(['- [0] AXWindow "New Tab - Google Chrome"', '  - [22] AXWebArea "New Tab"', '    - [23] AXWebArea'].join("\n")), null);
   assert.equal(staleOf(['- [0] AXWindow "example.com/a - Google Chrome - Sam (Work)"', '  - [22] AXWebArea [actions=[showmenu]]'].join("\n")), null);   // a page with no title
   assert.deepEqual(staleOf(tree), { tab: "API access", page: "Home - Example Console" });
-  assert.match(src, /const stale = \["press", "fill", "click", "key-to-env"\]\.includes\(cmd\) && staleOf\(s\.tree_markdown \?\? ""\);\n  if \(stale\) \{ console\.log\(STALE\(stale\)\); process\.exit\(3\); \}/);
+  assert.match(src, /acts = \["press", "fill", "type", "key", "click", "key-to-env", "wait"\]\.includes\(cmd\)/);
+  // a page whose title ticks (the lab's, every second) is read between two ticks: old only when a second read, a second later, holds the same page
+  const tick = (tab, page) => staleOf([`- [0] AXWindow "lab t${tab} - Google Chrome"`, `  - [7] AXWebArea "lab t${page}"`].join("\n"));
+  assert.equal(stillStale(tick(52, 51), tick(53, 53)), null);
+  assert.equal(stillStale(tick(52, 51), tick(53, 52)), null);   // the tree moved: live
+  assert.deepEqual(stillStale(tick(52, 2), tick(53, 2)), { tab: "lab t53", page: "lab t2" });   // the hidden lab page: its tree stayed at t2
+  assert.match(src, /if \(stale\) \{ sleep\(1\); s = snapshot\(t\); stale = stillStale\(stale, staleOf\(s\.tree_markdown\)\); \}/);
+  assert.match(src, /if \(stale && acts\) \{ console\.log\(STALE\(stale\)\); process\.exit\(3\); \}/);
+});
+
+// the lab page of docs/research/background-2026-11-14.md as cua-driver gave it, with a toolbar and an extension's button
+const lab = [
+  '- [0] AXWindow "Lab - Google Chrome - Sam (Work)" [actions=[raise]]',
+  '    - [1] AXButton "Reload" (Reload) [actions=[press,showmenu]]',
+  '    - [3] AXTextField "Address and search bar" = "127.0.0.1:8765" (Address and search bar) [actions=[press,showmenu]]',
+  '    - [7] AXPopUpButton "Open Helper',
+  'Has access to this site" (Open Helper',
+  'Has access to this site) [actions=[press,showmenu]]',
+  '    - [8] AXPopUpButton "Extensions" (Extensions) [actions=[press,showmenu]]',
+  '  - [9] AXWebArea "Lab" [actions=[showmenu,scrolltovisible]]',
+  '    - [10] AXHeading "Lab one" [actions=[showmenu,scrolltovisible]]',
+  '      - [11] AXStaticText = "Lab one" [actions=[showmenu,scrolltovisible]]',
+  '    - AXGroup',
+  '      - [12] AXStaticText = "timer 16" [actions=[showmenu,scrolltovisible]]',
+  '    - [13] AXTextField "Plain field" [actions=[press,showmenu,scrolltovisible]]',
+  '    - [18] AXButton "Sync view" [actions=[press,showmenu,scrolltovisible]]',
+  '    - [21] AXLink "Second page" (Second page) [actions=[press,showmenu,scrolltovisible]]',
+  '      - [22] AXStaticText = "Second page" [actions=[showmenu,scrolltovisible]]',
+  '    - [30] AXTable [actions=[showmenu]]',
+  '      - [31] AXRow [actions=[showmenu]]',
+  '        - [32] AXCell',
+  '          - [33] AXStaticText = "alpha" [actions=[showmenu,scrolltovisible]]',
+  '      - [34] AXColumn',
+  '        - [35] AXCell',
+  '          - [36] AXStaticText = "alpha" [actions=[showmenu,scrolltovisible]]',
+  '  - [26] AXButton "New Tab" (New Tab) [actions=[press,showmenu]]',
+  '      - [364] AXMenuItem "New Tab" [id=commandDispatch: actions=[cancel,press,pick]]',
+].join("\n");
+
+test("a page prints as short lines: no index, action list, repeated label, unnamed group or column copy of a table", () => {
+  const page = compact(oneLine(lab));
+  assert.deepEqual(page, ['heading "Lab one"', '"timer 16"', 'textfield "Plain field"', 'button "Sync view"', 'link "Second page"', "table", " row", '  "alpha"']);
+  assert.ok(page.join("\n").length < oneLine(lab).length / 4);   // the same page for a quarter of the characters
+  // the browser's own controls are asked for apart, with an extension's two-line button name on one line, and no menu
+  assert.deepEqual(compact(oneLine(lab), true), ['button "Reload"', 'textfield "Address and search bar" = "127.0.0.1:8765"', 'popupbutton "Open Helper Has access to this site"', 'popupbutton "Extensions"', 'button "New Tab"']);
+  assert.equal(elementOf(oneLine(lab), "Open Helper Has access to this site", "popupbutton"), 7);
+  assert.equal(elementOf(lab, "Open Helper Has access to this site"), null);   // unjoined, the label is on no line
+  // a page's own menu is the page's: only the browser's menus are left out
+  assert.deepEqual(compact(['- [0] AXWindow "A"', '  - [1] AXWebArea "A"', '    - [2] AXMenu "Actions"', '      - [3] AXMenuItem "Rename"'].join("\n")), ['menu "Actions"', ' menuitem "Rename"']);
+  const long = compact(['- [0] AXWindow "A"', '  - [1] AXWebArea "A"', `    - [2] AXLink "${"x".repeat(200)}"`].join("\n"))[0];
+  assert.equal(long.length, 160);
+  assert.ok(long.endsWith("\u2026"));
+  assert.equal(elementOf(`    - [2] AXLink "${"x".repeat(200)}" [actions=[press]]`, long.slice(6)), 2);   // what was printed presses it
+  assert.deepEqual(compact('- [0] AXWindow "A"'), []);   // no page read yet
+  // a form as the lab page gave it: a label's text names the field after it, and a text with nothing in it says nothing
+  const form = ['- [0] AXWindow "A"', '  - [7] AXWebArea "A"', '    - [12] AXStaticText = "Plain field" [actions=[showmenu]]', '    - [13] AXTextField "Plain field" = "hello" [actions=[press]]', '    - [14] AXStaticText = "events none" [actions=[showmenu]]', '    - [16] AXTextField "Search box" [actions=[press]]', '    - [26] AXStaticText [actions=[showmenu,scrolltovisible]]'].join("\n");
+  assert.deepEqual(compact(form), ['textfield "Plain field" = "hello"', '"events none"', 'textfield "Search box"']);
+  assert.match(src, /if \(waited >= 8 \|\| compact\(s\.tree_markdown\)\.length\) break;/);   // a new browser's first reads come back empty: asked again, eight seconds at most
+});
+
+test("an action prints what it changed, not the page again", () => {
+  const before = ['heading "Lab one"', '"view start"', 'button "Sync view"', '"row"', '"row"'];
+  assert.deepEqual(changed(before, ['heading "Lab one"', '"view sync"', 'button "Sync view"', '"row"']), { added: ['"view sync"'], gone: 2 });
+  assert.deepEqual(changed(before, before), { added: [], gone: 0 });
+  assert.deepEqual(changed(['"row"'], [' "row"', '"row"']), { added: ['"row"'], gone: 0 });   // a line twice is two lines; indent is not a change
+  assert.match(src, /if \(addressOf\(s\) !== was\.address\) return head\(t, s\);/);   // another address: the new page's head, 25 lines (a title may tick)
+  assert.match(src, /sleep\(cmd === "press" \? 4 : 2\); s = snapshot\(t\); report\(t, was, s\); process\.exit\(0\);/);
+  assert.match(src, /const limit = Math\.min\(Number\(b\) \|\| 20, 300\);/);   // wait is bounded
+  assert.match(src, /if \(waited >= limit\) \{[^\n]*process\.exit\(4\); \}/);
+  assert.match(USAGE, /exit: 0 done, 1 refused, 2 your step \(password, passkey\), 3 the page is hidden or its tree is old, 4 wait timed out/);
+});
+
+test("a window fully under other windows of the same Chrome is hidden to Chrome, and nothing is read off or pressed in it", () => {
+  const screen = { x: 0, y: 0, width: 1728, height: 1117 }, popup = { x: 0, y: 148, width: 1200, height: 969 };
+  // the three lab readings of 2026-11-14: inside the popup the page went hidden; a strip past the screen's left edge did
+  // not bring it back; under a smaller popup it stayed live
+  assert.equal(covered({ x: 200, y: 154, width: 800, height: 600 }, [popup], screen), true);
+  assert.equal(covered({ x: -60, y: 200, width: 800, height: 600 }, [popup], screen), true);
+  assert.equal(covered({ x: -60, y: 200, width: 800, height: 600 }, [popup], null), false);   // the strip counts only when the screen is not asked
+  assert.equal(covered({ x: 22, y: 55, width: 1200, height: 1040 }, [{ x: 420, y: 52, width: 500, height: 400 }], screen), false);
+  assert.equal(covered({ x: 0, y: 33, width: 1728, height: 1084 }, [], screen), false);   // the front window
+  // two windows that cover it between them, and two that leave a strip
+  assert.equal(covered({ x: 0, y: 0, width: 100, height: 100 }, [{ x: 0, y: 0, width: 60, height: 100 }, { x: 60, y: 0, width: 40, height: 100 }], screen), true);
+  assert.equal(covered({ x: 0, y: 0, width: 100, height: 100 }, [{ x: 0, y: 0, width: 60, height: 100 }, { x: 61, y: 0, width: 39, height: 100 }], screen), false);
+  assert.equal(covered({ x: 3000, y: 0, width: 800, height: 600 }, [], screen), false);   // on another display: asked whole
+  assert.match(src, /if \(hidden === "covered" && acts\) \{ console\.log\(COVERED\(t\.window_id\)\); process\.exit\(3\); \}/);
+  assert.match(src, /function hiddenOf\(t\) \{\n  if \(t\.flag\) return null;/);   // with the flag Chrome hides no covered page (measured)
+  assert.match(src, /filter\(\(w\) => w\.pid === t\.pid\)/);   // only the same Chrome's windows: behind another app the page stayed live
+  assert.equal(FLAG, "--disable-backgrounding-occluded-windows");
+});
+
+test("a window is one session's: a second session is refused it until the first lets go, and one command acts at a time", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "chrome-control-test-"));
+  t.after(() => rmSync(dir, { recursive: true, force: true }));
+  const one = { session: "default", cwd: "/a" }, two = { session: "agent-2", cwd: "/a" };
+  assert.equal(claim(dir, "4242-7", one), null);
+  assert.equal(claim(dir, "4242-7", one), null);   // mine already
+  assert.deepEqual(claim(dir, "4242-7", two), one);
+  assert.deepEqual(claim(dir, "4242-7", { session: "default", cwd: "/b" }), one);   // the same name in another project is another session
+  assert.equal(claim(dir, "4242-8", two), null);   // another window is free
+  assert.equal(claim(dir, "4242-7", two, true), null);   // --take
+  assert.deepEqual(claim(dir, "4242-7", one), two);
+  const free = lock(dir, 4242, 0);
+  assert.equal(typeof free, "function");
+  assert.equal(lock(dir, 4242, 0), null);   // held by a live process (this one): not taken
+  free();
+  const again = lock(dir, 4242, 0);
+  assert.equal(typeof again, "function");
+  writeFileSync(path.join(dir, "4242.lock", "pid"), "999999999");   // a holder that is gone
+  assert.equal(typeof lock(dir, 4242, 0), "function");
+  assert.match(src, /const free = lock\(CLAIMS, t\.pid\);\n    if \(!free\) \{[^\n]*process\.exit\(1\); \}\n    process\.on\("exit", free\);/);
+  assert.match(src, /if \(other && \(other\.session !== session \|\| other\.cwd !== me\.cwd\)\) \{[^\n]*process\.exit\(1\); \}/);
+  assert.ok(src.includes('const KEPT = session === "default" && !browser ? state : state.replace(/\\.json$/, `${browser && `.browser-${browser}`}${session === "default" ? "" : `.${session}`}.json`);'));   // a kept window is a session's, in one browser
+});
+
+test("a background key that cua-driver refuses is said, never sent another way", () => {
+  assert.match(src, /if \(r\.effect === "refused" \|\| r\.code\) \{ console\.log\(r\.code === "same_pid_keyboard_ambiguity" \? KEYS\(t\.all\.length\)/);
+  assert.doesNotMatch(src, /delivery_mode|foreground/);   // no key is ever sent by fronting the window
 });

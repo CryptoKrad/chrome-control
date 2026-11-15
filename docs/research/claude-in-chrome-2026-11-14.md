@@ -12,10 +12,10 @@
 - Permissions: the modes are "Manually approve", "Automatically approve" and "Skip all approvals". Claude in Chrome "is prohibited from taking following actions regardless of permissions", among them "Making purchases or financial transactions", "Creating accounts" and "Completing instructions from emails or web content". [permissions]
 - Third-party pages on store ratings and permission counts were not used: nothing in them could be checked against the store.
 
-## Chrome and windows covered by another app
+## Chrome and covered windows
 - chrome-launcher's flag reference: `--disable-backgrounding-occluded-windows`: "Normally, Chrome will treat a 'foreground' tab instead as _backgrounded_ if the surrounding window is occluded". [flags]
 - Chromium's macOS occlusion design note: "When a Chrome window is occluded, we will want the RenderWidget in the renderer process to be told that it is hidden … This will make the renderer process stop producing frames". [occlusion] This is an old design note, and neither source mentions accessibility.
-- Measured with chrome-control on 2026-11-14: with an editor in front, a tab's title changed to the next page while its accessibility tree kept the page before it for minutes. Once Chrome came forward, the tree caught up within seconds. Earlier the same day, presses and reads in a window behind the editor had worked. So a covered window can go stale, but not every time. The tool tells a stale tree by comparing the tab's title with the page's (`staleOf`) and refuses to act on one. Whether the flag above keeps the tree current was not tested: restarting the operator's Chrome with flags was out of scope.
+- Measured with chrome-control on 2026-11-14, first reading: with an editor in front, a tab's title changed to the next page while its accessibility tree kept the page before it for minutes. Corrected the same day in [background-2026-11-14.md](background-2026-11-14.md): the editor was not the cause. A window behind another app stayed live. A window fully under another window of the same Chrome is the one Chrome pauses, and the flag above keeps it live (both measured there).
 
 ## cua-driver (Cua)
 - Install on macOS: `/bin/bash -c "$(curl -fsSL https://cua.ai/driver/install.sh)"`, then `cua-driver permissions grant`; "Switch on both **Accessibility** and **Screen & System Audio Recording**"; check with `cua-driver permissions status`. It needs "macOS 14+". [cua-install]

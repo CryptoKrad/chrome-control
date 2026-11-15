@@ -1,0 +1,29 @@
+<!doctype html><meta charset="utf-8"><title>lab</title>
+<h1>Lab one</h1>
+<p id="timer">timer 0</p>
+<p id="raf">raf 0</p>
+<label>Plain field <input id="plain"></label>
+<p id="log">events none</p>
+<form id="f"><label>Search box <input id="q" name="q"></label></form>
+<p id="sub">submitted nothing</p>
+<button id="sync">Sync view</button>
+<button id="spa">Frame view</button>
+<p id="view">view start</p>
+<a href="two.html">Second page</a>
+<a href="index.html?pop=cover">Cover me</a>
+<a href="index.html?pop=small">Small popup</a>
+<script>
+let t = 0, r = 0, ev = [];
+const $ = (id) => document.getElementById(id);
+const title = () => { document.title = `lab ${document.visibilityState} t${t} v=${$("view").textContent.replace("view ", "")} e=${ev.length}:${ev.slice(-3).join("+")} val=${$("plain").value} q=${$("q").value} s=${$("sub").textContent.replace("submitted ", "")}`; };
+setInterval(() => { t++; $("timer").textContent = "timer " + t; title(); }, 1000);
+(function loop() { r++; if (r % 30 === 0) $("raf").textContent = "raf " + r; requestAnimationFrame(loop); })();
+for (const e of ["keydown", "beforeinput", "input", "change"]) $("plain").addEventListener(e, (x) => { ev.push(e + (x.isTrusted ? "" : "(untrusted)")); $("log").textContent = "events " + ev.slice(-8).join(",") + " value=" + $("plain").value; title(); });
+$("f").addEventListener("submit", (e) => { e.preventDefault(); $("sub").textContent = "submitted " + $("q").value; title(); });
+$("sync").addEventListener("click", () => { $("view").textContent = "view sync"; title(); });
+$("spa").addEventListener("click", () => { document.title = "lab frame-pending"; requestAnimationFrame(() => { $("view").textContent = "view frame"; title(); }); });
+document.addEventListener("visibilitychange", title);
+// a popup opened with no user gesture is shown inactive, so the lab gets a second same-process window without fronting Chrome (needs --disable-popup-blocking)
+const pop = new URLSearchParams(location.search).get("pop");
+if (pop) setTimeout(() => { const w = window.open("two.html", "labpop", pop === "cover" ? `popup,left=${screenX - 10},top=${screenY - 10},width=${outerWidth + 20},height=${outerHeight + 20}` : "popup,left=1300,top=60,width=380,height=300"); $("view").textContent = "view pop-" + (w ? "opened" : "blocked"); title(); }, 1500);
+</script>
