@@ -47,3 +47,10 @@ One Search Console page, the same moment: 38,321 characters as the tree the earl
 - A window on another Space, and a minimized window. The tool says so (`OFF`) and does not refuse.
 - A second display. `covered` asks a window on another display whole.
 - Other browsers, other macOS versions, and how long case 4 holds past a minute.
+
+## Edge cases (W28, measured 2026-11-16)
+- **A minimized window.** `hiddenOf` returns "off" when `list_windows` reports the window is not on screen, and a minimized window is not on screen, so acting commands warn/refuse. One nuance: a `launch` browser carries `--disable-backgrounding-occluded-windows`, and with that flag `hiddenOf` returns null (it trusts the flag to keep windows live). The flag is about occlusion, not minimization, so a minimized window in a flagged Chrome reads as "live" though its tree is stale. Minimize is rare for an automated browser; noted as a known gap, not fixed.
+- **A window on another Space.** Same path: off-Space windows report not-on-screen, so "off". Not separately reproduced.
+- **A second display.** Not testable here (one display). `covered()` builds the screen rectangle from `get_screen_size` (the primary display), so a window wholly on a secondary display could be mis-assessed. Known untested gap; needs the hardware.
+- **An extension popup or toolbar bubble.** Chrome 157 ignored `--load-extension` in the lab, so no extension could be loaded. In a real window the toolbar lists each pinned extension as an `AXPopUpButton` that `press` can press, but what opens (a popup or a bubble) did not appear in the window's accessibility tree (measured 2026-11-14). So the tool can press an extension button but cannot drive what it opens.
+- No new rule emerged: the tool already handles the on-screen cases conservatively. These are documented limits, not code changes.
