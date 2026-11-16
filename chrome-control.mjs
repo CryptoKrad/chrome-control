@@ -117,7 +117,7 @@ export function keptWindow(windows, kept, profileName, only = false) {
  *  taken as printed or as the tree has it ("button", "AXButton"), and a label that ends "…" is a label's opening. */
 export function elementOf(markdown, label, role = "") {
   const want = role.replace(/^AX/i, "").toLowerCase(), cut = label.endsWith("\u2026") ? label.slice(0, -1) : null;
-  const hits = markdown.split("\n").filter((l) => {
+  const hits = withoutColumns(markdown).filter((l) => {
     const m = /\[\d+\] AX(\w+)(.*)$/.exec(l);
     if (!m || (want && m[1].toLowerCase() !== want)) return false;
     if (cut !== null) return m[2].startsWith(` "${cut}`) || (want !== "" && m[2].startsWith(` = "${cut}`));
@@ -132,6 +132,20 @@ export function elementOf(markdown, label, role = "") {
 export function suggestionOf(markdown, url) {
   const hits = markdown.split("\n").filter((l) => { const m = /\[\d+\] AXStaticText = "(.*), \d+ of \d+"/.exec(l); return m && (m[1] === url || m[1] === url.replace(/\/$/, "")) && /actions=\[[^\]]*press/.test(l); });
   return hits.length === 1 ? Number(/\[(\d+)\]/.exec(hits[0])[1]) : null;
+}
+
+/** The tree's lines without a table's column copy: Chrome exposes each cell once under its AXRow and again under an
+ *  AXColumn, so a field in a table (WordPress's settings tables) would otherwise be found twice and never pressed. */
+export function withoutColumns(markdown) {
+  const out = [];
+  let skip = -1;
+  for (const l of markdown.split("\n")) {
+    const d = l.search(/\S/);
+    if (skip >= 0 && d > skip) continue;
+    skip = /\] AXColumn\b/.test(l) ? d : -1;
+    if (skip < 0) out.push(l);
+  }
+  return out;
 }
 
 /** The table row (an AXRow and the lines indented under it) that holds the quoted text `text`, as tree lines; null when

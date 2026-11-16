@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { windowOf, keptWindow, elementOf, onlyMatch, withEnv, tabOf, OWNER_STEP, ownChrome, pageOf, sameTitle, rowOf, ofProfile, profileOf, staleOf, stillStale, suggestionOf, oneLine, compact, changed, covered, claim, lock, FLAG, USAGE } from "./chrome-control.mjs";
+import { windowOf, keptWindow, elementOf, withoutColumns, onlyMatch, withEnv, tabOf, OWNER_STEP, ownChrome, pageOf, sameTitle, rowOf, ofProfile, profileOf, staleOf, stillStale, suggestionOf, oneLine, compact, changed, covered, claim, lock, FLAG, USAGE } from "./chrome-control.mjs";
 
 const src = readFileSync(new URL("./chrome-control.mjs", import.meta.url), "utf8");
 const tree = [
@@ -68,6 +68,13 @@ test("an element is pressed only by a label that is on the page once, and a pres
   assert.equal(elementOf(domains, "example.ca", "AXStaticText"), 107);
   assert.equal(elementOf(menus.replace("AXButton", "AXMenuItem"), "New Tab"), null);   // three that can be pressed: none
   assert.equal(elementOf(menus, "New Tab", "button"), 266);   // the role as `read` prints it
+  // a settings table (WordPress theme options, 2026-11-16): the cell's field again under the AXColumn copy is not a second field
+  const table = ['    - [480] AXTable [actions=[showmenu]]', '      - [481] AXRow [actions=[showmenu]]', '        - [484] AXCell [actions=[showmenu]]',
+    '          - [485] AXTextArea "Header Scripts" [actions=[press,showmenu]]', '      - [507] AXColumn [actions=[showmenu]]', '        - [508] AXCell [actions=[showmenu]]',
+    '          - [509] AXTextArea "Header Scripts" [actions=[press,showmenu]]', '    - [523] AXButton "Save Changes" [actions=[press]]'].join("\n");
+  assert.equal(elementOf(table, "Header Scripts", "textarea"), 485);
+  assert.equal(elementOf(table, "Save Changes"), 523);   // a line after the column is kept
+  assert.equal(withoutColumns(table).length, 5);
   assert.equal(elementOf(menus, "New Tab", "axbutton"), 266);
   assert.equal(elementOf(tree, "Generate API\u2026"), 39);   // a label `read` cut at 160 characters
   assert.equal(elementOf(menus, "New\u2026"), null);   // an opening on three lines: none
