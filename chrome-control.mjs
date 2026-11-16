@@ -268,7 +268,7 @@ export function lock(dir, key, wait = 30) {
 }
 
 function cua(tool, args) {
-  try { return JSON.parse(execFileSync("cua-driver", ["call", tool, JSON.stringify(args)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] })); }
+  try { return JSON.parse(execFileSync("cua-driver", ["call", tool, JSON.stringify(args)], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"], maxBuffer: 64 << 20 })); }   // a long admin page's tree passes the default 1 MB
   catch (e) { try { return JSON.parse(e.stdout); } catch { throw e; } }   // a refusal is an answer too
 }
 
