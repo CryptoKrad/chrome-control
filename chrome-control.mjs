@@ -158,7 +158,9 @@ export function onlyMatch(markdown, re) {
 
 /** .env text with NAME set to value, every other line kept. */
 export function withEnv(text, name, value) {
-  return [...text.split("\n").filter((l) => l && !l.startsWith(`${name}=`)), `${name}=${value}`].join("\n") + "\n";
+  // A value with spaces (a WordPress application password) breaks `. .env` unquoted; single quotes keep it literal.
+  const v = /^[\w.\/:@+-]*$/.test(value) ? value : value.includes("'") ? JSON.stringify(value) : `'${value}'`;
+  return [...text.split("\n").filter((l) => l && !l.startsWith(`${name}=`)), `${name}=${v}`].join("\n") + "\n";
 }
 
 /** The tree with a label that spans lines put on one line (an extension's toolbar button names itself on two). */

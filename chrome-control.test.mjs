@@ -79,6 +79,7 @@ test("a key goes to .env only when exactly one text is the key, and the other li
   assert.equal(onlyMatch(tree, "[0-9a-f]{32}"), "0123456789abcdef0123456789abcdef");
   assert.equal(onlyMatch(tree + '\n- [50] AXStaticText = "ffffffffffffffffffffffffffffffff"', "[0-9a-f]{32}"), null);
   assert.equal(withEnv("A=1\nEXAMPLE_API_KEY=old\n", "EXAMPLE_API_KEY", "new"), "A=1\nEXAMPLE_API_KEY=new\n");
+  assert.equal(withEnv("", "PW", "abcd efgh"), "PW='abcd efgh'\n");   // spaced values stay one shell word
 });
 
 test("a tab is closed only by a title on one tab, and only once it is the active tab", () => {
