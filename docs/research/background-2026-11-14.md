@@ -54,3 +54,19 @@ One Search Console page, the same moment: 38,321 characters as the tree the earl
 - **A second display.** Not testable here (one display). `covered()` builds the screen rectangle from `get_screen_size` (the primary display), so a window wholly on a secondary display could be mis-assessed. Known untested gap; needs the hardware.
 - **An extension popup or toolbar bubble.** Chrome 157 ignored `--load-extension` in the lab, so no extension could be loaded. In a real window the toolbar lists each pinned extension as an `AXPopUpButton` that `press` can press, but what opens (a popup or a bubble) did not appear in the window's accessibility tree (measured 2026-11-14). So the tool can press an extension button but cannot drive what it opens.
 - No new rule emerged: the tool already handles the on-screen cases conservatively. These are documented limits, not code changes.
+
+## 2026-11-17: moving a window does not wake a paused page
+
+Same Mac, Chrome and cua-driver. An editor's window filled the screen in front of both lab Chromes. Asked because the owner's Chrome had ten windows and the kept one was paused under a sibling.
+
+| # | Case | Result |
+|---|---|---|
+| 20 | Case 5, then the paused window moved by `set_window_frame` so a 60-pixel strip came out from under the Chrome cover (still under the editor) | Still `hidden`. The move was confirmed and Chrome stayed behind the editor. The tree took one new value at the first move, then froze again. |
+| 21 | Case 20, then the cover moved so it no longer lay over the window at all | Still `hidden` 3 s and 30 s later. |
+| 22 | Case 21, then the window moved again | Still `hidden`, and no new tree value. |
+| 23 | A second lab Chrome with one window, behind the same editor | `visible`, the tree current. Case 4 holds. |
+
+- In case 6 a strip on the screen woke the page. Here the strip lay under the editor, and after the cover moved only the editor lay over the window. So a page that Chrome has paused does not come back while another app's window lies over it, although that window alone never pauses a page (case 23).
+- cua-driver 0.24.0 has no raise action for a window (its `click` takes press, show_menu, pick, confirm, cancel and open). So a window cannot be put above its siblings in the background.
+- So there is no background cure. The ways out are the ones the tool has: `open`, which brings Chrome forward; the start flag of case 7; or a browser of the tool's own (`launch`), which has one window and the flag. The refusal now says that moving the window does not help.
+

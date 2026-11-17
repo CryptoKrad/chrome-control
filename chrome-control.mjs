@@ -328,7 +328,7 @@ function hiddenOf(t) {
 const addressOf = (s) => /AXTextField "Address and search bar" = "([^"]*)"/.exec(s.tree_markdown)?.[1] ?? titleOf(s);   // a window with no toolbar: its title
 const titleOf = (s) => pageOf(/AXWindow "([^"]*)"/.exec(s.tree_markdown.split("\n")[0])?.[1] ?? "");
 const STALE = ({ tab, page }) => `The tab shows "${tab}" but its tree still holds "${page}": Chrome has not updated the page. Bring the window forward (\`open\` does), then try again.`;
-const COVERED = (id, acting = true) => `Window ${id} is fully under another window of this Chrome, so Chrome has paused its page: ${acting ? "a press would land unseen, so nothing was done" : "what follows may be old"}. \`doctor\` has the one-time fix; \`open\` brings the window forward.`;
+const COVERED = (id, acting = true) => `Window ${id} is fully under another window of this Chrome, so Chrome has paused its page: ${acting ? "a press would land unseen, so nothing was done" : "what follows may be old"}. \`open\` brings the window forward, and \`doctor\` has the one-time fix; moving the window does not wake the page (measured 2026-11-17).`;
 const OFF = (id) => `Window ${id} is not on the screen (minimized or on another Space): its tree may be old.`;
 const KEYS = (n) => `cua-driver refuses a background key while Chrome has ${n} windows: it could land in another one. \`fill\` sets a field without keys, and a page's own button stands in for Return. Keys work when Chrome has one window.`;
 

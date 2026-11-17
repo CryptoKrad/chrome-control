@@ -67,7 +67,7 @@ The Claude in Chrome column quotes Anthropic's own pages, read on 2026-11-14. Th
 2. **It finds the window.** In your own Chrome it takes windows of one profile, by the accessibility title `… - Google Chrome - <name> (<profile>)`. You keep one with `use <id>`.
 3. **It reads** the window's accessibility tree through [cua-driver](https://github.com/trycua/cua) and prints it as short lines.
 4. **It acts on one element.** `press`, `fill` and `type` find the single element with that exact label. A role, or the text of a table row, narrows the search. cua-driver performs the action on that element without raising the window.
-5. **It checks the page is live.** Chrome pauses a page whose window sits fully under another window of the same Chrome: the tree stops and animations wait, while presses still land unseen. The tool works that out from the windows' frames and order and refuses to act in such a window.
+5. **It checks the page is live.** Chrome pauses a page whose window sits fully under another window of the same Chrome: the tree stops and animations wait, while presses still land unseen. The tool works that out from the windows' frames and order and refuses to act in such a window. Once paused, the page stays paused while another app's window lies over it, even after the cover or the window moves (measured 2026-11-17). So the cures are `open`, the start flag that `doctor` names, or a browser of the tool's own (`launch`).
 
 ## Rules it keeps
 - **No app is put back in front**, and none is brought forward, with one exception: `open` in your own Chrome while it has several windows. If the front app changes during a command, the tool says so and leaves it.
