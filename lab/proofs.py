@@ -27,7 +27,7 @@ MUTATIONS = [
     ("the flag is not asked", "if (t.flag) return null;", ""),
     ("a secret field is typed into", '(cmd === "fill" || cmd === "type") && SECRET_FIELD.test(a)', 'cmd === "fill" && SECRET_FIELD.test(a)'),
     ("open: a suggestion that is not the address is pressed", 'return m && (m[1] === url || m[1] === url.replace(/\\/$/, "")) && /actions', "return m && /actions"),
-    ("open: of several suggestions one is pressed", "return hits.length === 1 ? Number(/\\[(\\d+)\\]/.exec(hits[0])[1]) : null;\n}\n\n/** The table row", "return hits.length >= 1 ? Number(/\\[(\\d+)\\]/.exec(hits[0])[1]) : null;\n}\n\n/** The table row"),
+    ("open: of several suggestions one is pressed", "return hits.length === 1 ? Number(/\\[(\\d+)\\]/.exec(hits[0])[1]) : null;\n}\n\n/** The tree's lines without", "return hits.length >= 1 ? Number(/\\[(\\d+)\\]/.exec(hits[0])[1]) : null;\n}\n\n/** The tree's lines without"),
     ("open: a window that is not the suggestions' is pressed in", 'const row = /AXWebArea "Omnibox Popup"/.test(list.tree_markdown ?? "") ? suggestionOf', 'const row = true ? suggestionOf'),
     ("wait has no bound", "Math.min(Number(b) || 20, 300)", "Number(b) || 20"),
     ("another session's window is used", "if (other && (other.session !== session || other.cwd !== me.cwd)) {", "if (false) {"),
