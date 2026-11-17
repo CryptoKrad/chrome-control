@@ -70,3 +70,7 @@ Same Mac, Chrome and cua-driver. An editor's window filled the screen in front o
 - cua-driver 0.24.0 has no raise action for a window (its `click` takes press, show_menu, pick, confirm, cancel and open). So a window cannot be put above its siblings in the background.
 - So there is no background cure. The ways out are the ones the tool has: `open`, which brings Chrome forward; the start flag of case 7; or a browser of the tool's own (`launch`), which has one window and the flag. The refusal now says that moving the window does not help.
 
+## 2026-11-17: `open` in a Chrome with several blank windows
+
+The owner's Chrome had 10 windows after a restart, 6 of them titled "New Tab". `open` pressed the kept window's New Tab button and then asked Apple Events for the one window named "New Tab": 6 matched, so it opened nothing and said so (`windows that match: 6; nothing opened`). The bounds cannot tell them apart (every window was full-screen, 0,33 1728x1084, over Apple Events and over cua-driver alike), and the Apple Events window list did not line up with cua-driver's (8 against 10: the profile picker and an extension popup differ). So the refusal stands. The way out is a kept window whose new tab is the only "New Tab" window: close the blank windows first, or `launch` a browser of the tool's own, which has one window.
+
