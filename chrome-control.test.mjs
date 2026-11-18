@@ -8,7 +8,7 @@ import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { windowOf, keptWindow, elementOf, withoutColumns, onlyMatch, withEnv, tabOf, OWNER_STEP, ownChrome, pageOf, sameTitle, rowOf, ofProfile, profileOf, staleOf, stillStale, suggestionOf, oneLine, compact, changed, covered, claim, lock, FLAG, USAGE } from "./chrome-control.mjs";
+import { windowOf, keptWindow, elementOf, withoutColumns, onlyMatch, withEnv, tabOf, OWNER_STEP, ownChrome, pageOf, sameTitle, rowOf, ofProfile, profileOf, staleOf, stillStale, suggestionOf, searchBoxOf, profilesOf, oneLine, compact, changed, covered, claim, lock, FLAG, USAGE } from "./chrome-control.mjs";
 
 const src = readFileSync(new URL("./chrome-control.mjs", import.meta.url), "utf8");
 const tree = [
@@ -319,4 +319,27 @@ test("a window is one session's: a second session is refused it until the first 
 test("a background key that cua-driver refuses is said, never sent another way", () => {
   assert.match(src, /if \(r\.effect === "refused" \|\| r\.code\) \{ console\.log\(r\.code === "same_pid_keyboard_ambiguity" \? KEYS\(t\.all\.length\)/);
   assert.doesNotMatch(src, /delivery_mode|foreground/);   // no key is ever sent by fronting the window
+});
+
+test("with several windows, open tries the new tab page's search box before the Apple Event that brings Chrome forward", () => {
+  // the new tab page's own list, as measured 2026-11-17 with 10 windows open: an unvisited address, then one from history
+  const page = ['- [0] AXWindow [actions=[raise]]', '  - [1] AXWebArea "New Tab" [actions=[showmenu,scrolltovisible]]',
+    '    - [33] AXTextArea = "Ask Google" [actions=[press,showmenu,scrolltovisible]]',
+    '      - [35] AXStaticText = "https://example.org/a, 1 of 2" [actions=[press,showmenu,scrolltovisible]]',
+    '      - [36] AXStaticText = "https://example.org/a search, 2 of 2" [actions=[press,showmenu,scrolltovisible]]'].join("\n");
+  assert.equal(searchBoxOf(page), 33);
+  assert.equal(searchBoxOf(page.replace(/AXTextArea/, "AXTextField")), null);   // no box: the Apple Event is next
+  assert.equal(searchBoxOf(`${page}\n    - [40] AXTextArea = "x" [actions=[press]]`), null);   // two boxes: no guess
+  assert.equal(suggestionOf(page, "https://example.org/a"), 35);
+  const history = '      - [7] AXStaticText = "dash.example.com, press Tab then Enter to Remove Suggestion., 1 of 8" [actions=[press,showmenu,scrolltovisible]]';
+  assert.equal(suggestionOf(history, "dash.example.com"), 7);
+  assert.equal(suggestionOf(history, "dash.example"), null);   // a shorter address is never matched by a prefix
+  const box = src.indexOf("const box = searchBoxOf(s.tree_markdown)"), event = src.indexOf('appleEvent("id", t.pid, "New Tab")');
+  assert.ok(box > 0 && event > box, "the search box comes first, the Apple Event last");
+});
+
+test("profiles names each folder with the account signed in to it, so the profile is chosen by account", () => {
+  const cache = { Default: { name: "Person 1" }, "Profile 1": { name: "Work", user_name: "sam@example.com" }, "Profile 2": { name: "Home", user_name: "" } };
+  assert.deepEqual(profilesOf(cache), ["Default | Person 1 | -", "Profile 1 | Work | sam@example.com", "Profile 2 | Home | -"]);
+  assert.deepEqual(profilesOf(undefined), []);
 });

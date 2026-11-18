@@ -20,10 +20,11 @@ export const USAGE = `chrome-control <command> [--session <name>] [--browser <na
   fill "<label>" <text> [role] set a field's value (fires input and change)
   type "<label>" <text> [role] type with real key events; key <name> ["<label>"] presses return, tab, escape, cmd+a ...
   click <x> <y>                click a pixel of the window's capture
-  open <url>                   open in a new tab; in the background when Chrome has one window
+  open <url>                   open in a new tab, in the background (several windows: through the new tab page's search box)
   close-tab "<title>"          close the one tab of that title
   key-to-env <NAME> '<regex>'  write the one matching text on the page into .env, unprinted
   launch <name> [url]          start a Chrome of the tool's own in the background, on an empty profile; --browser <name> works in it
+  profiles                     Chrome's profile folders, names and signed-in accounts: pick OWNER_CHROME_PROFILE from it
   doctor                       what works right now, and why not
   stop                         stop cua-driver
 exit: 0 done, 1 refused, 2 your step (password, passkey), 3 the page is hidden or its tree is old, 4 wait timed out`;
@@ -51,6 +52,12 @@ export function windowOf(windows, profileName, only = false) {
 export function profileOf(infoCache = {}, dir = "") {
   const dirs = Object.keys(infoCache), d = dir || (dirs.length === 1 ? dirs[0] : "");
   return infoCache[d] ? { dir: d, name: infoCache[d].name, only: dirs.length === 1 } : null;
+}
+
+/** One line per profile: the folder OWNER_CHROME_PROFILE takes, the name Chrome shows, and the account signed in to it
+ *  ("-" when none), so the profile that holds a sign-in is chosen by that account and not guessed from a name. */
+export function profilesOf(infoCache = {}) {
+  return Object.entries(infoCache).map(([dir, p]) => `${dir} | ${p.name ?? ""} | ${p.user_name || "-"}`);
 }
 
 /** The owner's own Chrome among the running ones: an automation Chrome (Playwright, Puppeteer, an agent's browser)
@@ -127,10 +134,18 @@ export function elementOf(markdown, label, role = "") {
   return one.length === 1 ? Number(/\[(\d+)\]/.exec(one[0])[1]) : null;
 }
 
-/** The address bar's own suggestion that is exactly the address typed: Chrome lists it as "<address>, 1 of 2", and a
- *  bare origin without its last slash. Null when none or several, so nothing else the bar offers is ever pressed. */
+/** The suggestion that is exactly the address typed: Chrome lists it as "<address>, 1 of 2", a bare origin without its
+ *  last slash, and on the new tab page an address from history as "<address>, press Tab then Enter to Remove
+ *  Suggestion., 1 of 8" (measured 2026-11-17). Null when none or several, so nothing else offered is ever pressed. */
 export function suggestionOf(markdown, url) {
-  const hits = markdown.split("\n").filter((l) => { const m = /\[\d+\] AXStaticText = "(.*), \d+ of \d+"/.exec(l); return m && (m[1] === url || m[1] === url.replace(/\/$/, "")) && /actions=\[[^\]]*press/.test(l); });
+  const hits = markdown.split("\n").filter((l) => { const m = /\[\d+\] AXStaticText = "(.*?)(?:, press Tab then Enter to Remove Suggestion\.)?, \d+ of \d+"/.exec(l); return m && (m[1] === url || m[1] === url.replace(/\/$/, "")) && /actions=\[[^\]]*press/.test(l); });
+  return hits.length === 1 ? Number(/\[(\d+)\]/.exec(hits[0])[1]) : null;
+}
+
+/** The new tab page's search box: the page's one text area ("Ask Google" in 2026; the label changes, the role has not).
+ *  Null when none or several. */
+export function searchBoxOf(markdown) {
+  const hits = markdown.split("\n").filter((l) => /\[\d+\] AXTextArea\b/.test(l));
   return hits.length === 1 ? Number(/\[(\d+)\]/.exec(hits[0])[1]) : null;
 }
 
@@ -287,7 +302,7 @@ function profileWindows(browser) {
   }
   const state = JSON.parse(readFileSync(path.join(homedir(), "Library/Application Support/Google/Chrome/Local State"), "utf8"));
   const p = profileOf(state.profile?.info_cache, process.env.OWNER_CHROME_PROFILE);
-  if (!p) throw new Error(process.env.OWNER_CHROME_PROFILE ? `Chrome has no profile folder "${process.env.OWNER_CHROME_PROFILE}"` : "Chrome has several profiles: set OWNER_CHROME_PROFILE to one folder (see README)");
+  if (!p) throw new Error(process.env.OWNER_CHROME_PROFILE ? `Chrome has no profile folder "${process.env.OWNER_CHROME_PROFILE}"` : "Chrome has several profiles: set OWNER_CHROME_PROFILE to one folder (`profiles` lists them)");
   const { dir, name, only } = p;
   const pid = ownChrome(procs);
   if (!pid) throw new Error("not one Chrome without its own --user-data-dir is running");
@@ -374,6 +389,10 @@ export function main(argv = process.argv.slice(2), { envFile = path.join(process
   const [cmd, a, b, c] = argv.filter((x, i) => !flags.has(x) && ![at, bat].some((j) => j >= 0 && (i === j || i === j + 1)));
   if (![session, browser || "x", cmd === "launch" ? a ?? "" : "x"].every((n) => /^[\w.-]{1,40}$/.test(n))) { console.log("a session or browser name is letters, digits, dots and dashes"); process.exit(1); }
   if (!cmd || cmd === "help") { console.log(USAGE); process.exit(0); }
+  if (cmd === "profiles") {   // read before any profile is chosen, and with no driver
+    const ls = JSON.parse(readFileSync(path.join(homedir(), "Library/Application Support/Google/Chrome/Local State"), "utf8"));
+    profilesOf(ls.profile?.info_cache).forEach((l) => console.log(l)); process.exit(0);
+  }
   if (cmd === "stop") { execFileSync("cua-driver", ["stop"], { stdio: "ignore" }); console.log("cua-driver stopped"); process.exit(0); }
   const KEPT = session === "default" && !browser ? state : state.replace(/\.json$/, `${browser && `.browser-${browser}`}${session === "default" ? "" : `.${session}`}.json`);
   const kept = existsSync(KEPT) ? JSON.parse(readFileSync(KEPT, "utf8")) : null, me = { session, cwd: process.cwd() };
@@ -431,10 +450,17 @@ export function main(argv = process.argv.slice(2), { envFile = path.join(process
     });
     let how = "in the background";
     if (rows.length === 1) cua("click", { ...rows[0], action: "press" });
-    else if (((r) => r.effect === "refused" || r.code)(cua("press_key", { ...here, element_index: bar, snapshot_id: s.snapshot_id, key: "return" }))) {   // several windows: no list shows and Return is refused. An Apple Event to this Chrome's pid, which brings it forward (3 of 3 by pid)
-      const id = appleEvent("id", t.pid, "New Tab"), r = /^\d+$/.test(id) ? appleEvent("go", t.pid, id, a) : id;
-      if (r !== "opened") { console.log(`${r} (a new tab was left open)`); process.exit(1); }
-      how = "by an Apple Event, which brought Chrome forward";
+    else if (((r) => r.effect === "refused" || r.code)(cua("press_key", { ...here, element_index: bar, snapshot_id: s.snapshot_id, key: "return" }))) {   // several windows: no list shows and Return is refused
+      // first the new tab page's own search box: it lists the address as a row of the page, pressed in the background (measured 2026-11-17, 10 windows)
+      s = snapshot(t); const box = searchBoxOf(s.tree_markdown);
+      if (box !== null) { cua("set_value", { ...here, element_index: box, snapshot_id: s.snapshot_id, value: a }); sleep(1.5); s = snapshot(t); }
+      const row = box === null ? null : suggestionOf(s.tree_markdown, a);
+      if (row !== null) { cua("click", { ...here, element_index: row, snapshot_id: s.snapshot_id, action: "press" }); how = "from the new tab's search box, in the background"; }
+      else {   // last: an Apple Event to this Chrome's pid, which brings it forward (3 of 3 by pid) and needs one window titled New Tab
+        const id = appleEvent("id", t.pid, "New Tab"), r = /^\d+$/.test(id) ? appleEvent("go", t.pid, id, a) : id;
+        if (r !== "opened") { console.log(`${r} (a new tab was left open)`); process.exit(1); }
+        how = "by an Apple Event, which brought Chrome forward";
+      }
     }
     sleep(7); s = snapshot(t); console.log(`opened ${how}`); head(t, s); process.exit(0);
   }

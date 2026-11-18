@@ -37,7 +37,7 @@ Every line of that table was measured. The readings are in [docs/research/backgr
 | Account | None. MIT licensed. | A paid Claude plan: Pro, Max, Ultra, Team or Enterprise. |
 | Browser | Google Chrome on macOS. | Chrome and Edge. From Claude Code it also connects to Brave, Arc, Vivaldi and Opera. Not WSL. |
 | Window | A window you already have open, or a browser the tool starts behind your work. | New tabs that Claude opens, collected in a tab group. |
-| Your screen | It works behind the app in front. One case brings Chrome forward: `open` in your own Chrome while it has several windows. | Actions "run in a visible Chrome window in real time". |
+| Your screen | It works behind the app in front. One case brings Chrome forward: `open` in your own Chrome with several windows, when the new tab page's search box is not there. | Actions "run in a visible Chrome window in real time". |
 | What it sees | The page's accessibility tree, as short text lines. | The page, its DOM, the console, screenshots and GIF recordings. |
 | Who decides each step | You or your agent, by exact label. A label it can't find once is refused, never guessed. | The model, on the page as it sees it. |
 | Guard rails | It stops at password and passkey prompts, won't fill secret fields and won't act in a page Chrome has paused. | Per-site permissions. Some actions, such as purchases and account creation, are refused in every mode. |
@@ -70,7 +70,7 @@ The Claude in Chrome column quotes Anthropic's own pages, read on 2026-11-14. Th
 5. **It checks the page is live.** Chrome pauses a page whose window sits fully under another window of the same Chrome: the tree stops and animations wait, while presses still land unseen. The tool works that out from the windows' frames and order and refuses to act in such a window. Once paused, the page stays paused while another app's window lies over it, even after the cover or the window moves (measured 2026-11-17). So the cures are `open`, the start flag that `doctor` names, or a browser of the tool's own (`launch`).
 
 ## Rules it keeps
-- **No app is put back in front**, and none is brought forward, with one exception: `open` in your own Chrome while it has several windows. If the front app changes during a command, the tool says so and leaves it.
+- **No app is put back in front**, and none is brought forward, with one exception: `open` in your own Chrome with several windows, when the new tab page's search box is not there (its last resort, an Apple Event). If the front app changes during a command, the tool says so and leaves it.
 - **Passwords and passkeys are yours.** A page that asks for one ends the command with exit 2. A field whose label reads like a secret is never filled or typed into.
 - **One match or nothing.** If a label is on the page twice, or a title is on two tabs, the command is refused, not guessed.
 - **No acting in a paused page or on an old tree.** Both end `press`, `fill`, `type`, `key`, `click`, `wait` and `key-to-env` with exit 3. `read` still prints, with a warning.
@@ -92,13 +92,13 @@ You need macOS 14 or later, Google Chrome and Node 22 or later.
    git clone https://github.com/CryptoKrad/chrome-control
    cd chrome-control && node --test && node chrome-control.mjs doctor
    ```
-3. In your own Chrome with several windows, the first `open` makes macOS ask whether your terminal may control Google Chrome. Allow it.
+3. In your own Chrome with several windows, `open` types the address into the new tab page's own search box and presses its suggestion, in the background. Only when that box is missing does it use an Apple Event; the first one makes macOS ask whether your terminal may control Google Chrome. Allow it.
 
 `chrome-control` in this page stands for `node /path/to/chrome-control/chrome-control.mjs`. Run `npm link` in the folder to get the short name.
 
 ## Set up
 **Your own Chrome:**
-- **Pick a profile.** With one profile there is nothing to set. Otherwise set `OWNER_CHROME_PROFILE` to the profile's folder name, in your environment or in a `.env` file in the folder you run the tool from (`OWNER_CHROME_PROFILE="Profile 1"`). `chrome://version` shows the folder at the end of "Profile Path".
+- **Pick a profile.** With one profile there is nothing to set. Otherwise set `OWNER_CHROME_PROFILE` to the profile's folder name, in your environment or in a `.env` file in the folder you run the tool from (`OWNER_CHROME_PROFILE="Profile 1"`). `chrome-control profiles` lists every folder with the account signed in to it; choose by the account that holds the sign-in you need.
 - **Keep one window.** `windows` lists the profile's windows, and `use <id>` keeps one. The choice is saved in `.local/chrome-control.json`. Keep `.env` and `.local/` out of git.
 - **Keep covered windows live (optional, once).** Quit Chrome, then start it with `open -a "Google Chrome" --args --disable-backgrounding-occluded-windows`. `doctor` shows whether the flag is on.
 
@@ -122,10 +122,11 @@ Its profile lives in `~/.chrome-control/browsers/work`. Sign in to what the agen
 | `type "<label>" <text> [role]` | Type with real key events. |
 | `key <name> ["<label>"]` | Press `return`, `tab`, `escape`, an arrow, or a chord such as `cmd+a`. |
 | `click <x> <y>` | Click a pixel of the window's capture, for something with no label. |
-| `open <url>` | Open the address in a new tab. |
+| `open <url>` | Open the address in a new tab of the kept window, in the background. |
 | `close-tab "<title>"` | Close the one tab with that title. |
 | `key-to-env <NAME> '<regex>'` | Write the one text on the page that matches into `.env` as `NAME`, without printing it. |
 | `launch <name> [url]` | Start a browser of the tool's own in the background. |
+| `profiles` | List Chrome's profile folders, their names and the account signed in to each. Pick `OWNER_CHROME_PROFILE` from it by the account, not by the name. |
 | `doctor` | Say what works right now: permissions, the flag, keys, and whether the kept window is live. |
 | `stop` | Stop cua-driver. |
 
@@ -179,3 +180,5 @@ node lab/e2e.mjs       # every command end to end, in a throwaway background bro
 
 ## License
 MIT. See [LICENSE](LICENSE). "Chrome" is Google's trademark and "Claude" is Anthropic's. They are named here only to say what this tool works with and what it compares with.
+
+Step-by-step recipes for jobs this tool has done (dropdowns, buttons with no label, a dashboard's add-a-domain flow) are in [docs/recipes.md](docs/recipes.md).
