@@ -53,6 +53,9 @@ Steps that worked, in order, for jobs done with chrome-control in someone's own 
 - The stream panel ("Select stream") lists enhanced measurement: `press "Show N more active enhanced measurements." button` and `read`. Outbound clicks and site search come from there with no code.
 - Custom dimensions: Admin → `press "Custom definitions" link` → `press "Create custom dimension" popupbutton`. `fill "Dimension name" "<name>" textfield`, `fill "Event parameter" "<parameter>" combobox` (a parameter not yet received can be typed), `fill "Description" "<text>" textfield`, `press "Save" button`. The table count ("1 – N of N") confirms each one.
 - Key events: Admin → `press "Events" button` → `press "Key events" radiobutton`. An event is marked by its star in the list, and the list holds only events already received. An event that has not fired yet cannot be marked; mark it after its first hit.
+- The events table fills from processed data, so a new property can read "0 of 0" for up to two days while Realtime already counts visitors. Do not take the empty table as a tracking failure.
+- To prove that a site reaches the property, read the address (`read --ui`) to confirm `p<property>`, open Realtime overview, and send one visit. A headless browser's default user agent does not show up there, although its hit returns 204. Set an ordinary browser user agent for the test. A site with a consent banner sends nothing until the visitor accepts.
+- Analytics can open on the last property used. `a<account>p<other>` in the address means the numbers on screen belong to another property.
 - `open` can leave the address in the new tab's search box without going there. Moving inside the site by its own links (Admin, the left menu) avoids that.
 
 ## Stop points
