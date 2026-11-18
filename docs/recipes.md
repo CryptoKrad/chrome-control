@@ -38,6 +38,8 @@ Steps that worked, in order, for jobs done with chrome-control in someone's own 
 5. "Continue to activation"; a warning about DNS-only records offers "I'll do this later". The next page names the two nameservers.
 6. Check before the registrar change: `dig +short @<new nameserver> <domain> A` must give the same answers as step 1.
 7. The nameserver change at the registrar is the owner's step if the registrar asks for a password or a code.
+8. Check the result at the registry, not on the registrar's page: `dig +norecurse +noall +authority @<a TLD nameserver> <domain> NS`. One save showed a spinner and did not persist (measured 2026-11-18, Porkbun); the second took effect within about 30 s. After a reload the registrar's dialog tells which value it holds.
+9. Search Console: open `https://search.google.com/search-console?resource_id=sc-domain%3A<domain>`, `press "VERIFY YOUR OWNERSHIP" button` once `dig @8.8.8.8 <domain> TXT` shows the record, then Sitemaps → `fill "Enter sitemap URL"` → `press "SUBMIT" button`.
 
 ## Analytics property and search verification (Google, measured 2026-11-17)
 
