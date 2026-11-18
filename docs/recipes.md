@@ -36,6 +36,15 @@ Steps that worked, in order, for jobs done with chrome-control in someone's own 
 - Analytics: Admin (gear, bottom left; `click` it) → Create → Property. Name, then industry (a dropdown: open it, `click` the option from the capture), size, objectives, "Create a property", platform "Web", URL and stream name, "Create & continue". The measurement ID shows after "Select stream" as `G-…`; it is public.
 - Search Console: "Add a website" → Domain → `fill "example.com"` → the Domain card's Continue (`click`, two buttons share the label). It shows a `google-site-verification=…` TXT value; add it at the DNS host, then "Verify later" until `dig +short <domain> TXT` shows it from the live nameservers.
 
+## Report on event parameters in Analytics (Google, measured 2026-11-17)
+
+- Pick the property first. An admin address with `p0` in it has no property selected. `press "Open the universal picker." button`, then `press "<property name> <property number> Star item" link`. The address bar (`read --ui`) then shows `a<account>p<property>`; check it before changing anything.
+- A new property opens on its setup wizard ("Start collecting data"). `press "Next" button`, then `press "Continue to Home" link`, then `press "Admin" link`.
+- The stream panel ("Select stream") lists enhanced measurement: `press "Show N more active enhanced measurements." button` and `read`. Outbound clicks and site search come from there with no code.
+- Custom dimensions: Admin → `press "Custom definitions" link` → `press "Create custom dimension" popupbutton`. `fill "Dimension name" "<name>" textfield`, `fill "Event parameter" "<parameter>" combobox` (a parameter not yet received can be typed), `fill "Description" "<text>" textfield`, `press "Save" button`. The table count ("1 – N of N") confirms each one.
+- Key events: Admin → `press "Events" button` → `press "Key events" radiobutton`. An event is marked by its star in the list, and the list holds only events already received. An event that has not fired yet cannot be marked; mark it after its first hit.
+- `open` can leave the address in the new tab's search box without going there. Moving inside the site by its own links (Admin, the left menu) avoids that.
+
 ## Stop points
 
 - A password, passkey or one-time code: exit 2. That step is the owner's.
