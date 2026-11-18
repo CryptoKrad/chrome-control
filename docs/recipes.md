@@ -8,6 +8,14 @@ Steps that worked, in order, for jobs done with chrome-control in someone's own 
 2. `cc doctor`. It must say Accessibility and Screen Recording are on. With several windows it says `type` and `key` are refused; `press`, `fill`, `click` and `open` still work.
 3. `cc windows`, then `cc use <id>` on a window of that profile. Prefer a window that already shows the service you need: it is signed in.
 
+## One tab per agent, in a shared window (measured 2026-11-18)
+
+1. `export CHROME_CONTROL_SESSION=<agent name>`, also in any wrapper script.
+2. `cc windows`, then `cc tab <id> <url>`. `windows` shows each window's kept tabs.
+3. Work as usual: `read`, `find`, `wait`, `press`, `fill` act in your tab, whichever tab the window shows between commands. `open <url>` loads your tab; on a page other than the new tab page it may bring Chrome forward, so prefer following a link.
+4. A tab Chrome has unloaded answers with exit 3: `cc press Reload button`.
+5. `cc close-tab` closes your tab and no other. `cc release` lets go and leaves it open.
+
 ## Open a page
 
 - `cc open <url>`. With several Chrome windows Return is refused, so `open` puts the address in the new tab page's own search box and presses that box's suggestion for exactly the address (measured 2026-11-17, 10 windows, in the background). Only when no search box is found does it use an Apple Event, which brings Chrome forward.

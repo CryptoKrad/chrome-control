@@ -25,7 +25,7 @@ $ chrome-control wait "URL is on Google" 60
 | Type and keys | Only when your Chrome has one window. | Yes. It starts with one window and keeps to it unless a page opens another. |
 | Open a page | In the background with one window. With several it brings Chrome forward, and says so. | In the background. |
 | A window under another Chrome window | Chrome pauses its page, and the tool refuses to act (exit 3) unless Chrome runs with one flag. See `doctor`. | Does not happen: one window, started with the flag. |
-| Several agents | One window each, held by a session. | One browser each. |
+| Several agents | One window each, or one tab each in a shared window (`tab <id>`). | One browser each. |
 
 Every line of that table was measured. The readings are in [docs/research/background-2026-11-14.md](docs/research/background-2026-11-14.md).
 
@@ -75,7 +75,7 @@ The Claude in Chrome column quotes Anthropic's own pages, read on 2026-11-14. Th
 - **One match or nothing.** If a label is on the page twice, or a title is on two tabs, the command is refused, not guessed.
 - **No acting in a paused page or on an old tree.** Both end `press`, `fill`, `type`, `key`, `click`, `wait` and `key-to-env` with exit 3. `read` still prints, with a warning.
 - **A refused key is never sent another way.** When cua-driver refuses a background key, the tool says why. It does not fall back to a foreground key.
-- **One window, one session.** A second session is refused a window another one keeps.
+- **One window or one tab, one session.** A second session is refused a window or a tab another one keeps.
 - **Keys stay unprinted.** `key-to-env` writes the one text on the page that matches your pattern into `.env`, and prints only its length.
 - **Nothing is copied from your profile.** A copied profile shows a site the same session from two browsers. When that was tried once, outside this tool, the sites ended the session in the real browser. So the tool works in the real window, or in an empty profile you sign in to.
 
@@ -114,6 +114,7 @@ Its profile lives in `~/.chrome-control/browsers/work`. Sign in to what the agen
 |---|---|
 | `windows` | List the windows: id, title, and which session keeps each. |
 | `use <id> [--take]` | Keep that window for this session. `release` gives it back. |
+| `tab <id> [url]` | Open a new tab in that window and keep it for this session. Every later command works in that tab, and other sessions can keep their own tabs in the same window. `release` lets go and leaves the tab open; `close-tab` with no title closes it. |
 | `read [lines] [--ui] [--raw]` | Print the page as short lines. The default is 60. `--ui` prints the browser's own toolbar, tabs and extension buttons. `--raw` prints the full tree. |
 | `find "<text>"` | Print the lines that hold the text. |
 | `wait "<text>" [seconds]` | Poll until the page holds the text. The default is 20 seconds, the most 300. |
@@ -122,8 +123,8 @@ Its profile lives in `~/.chrome-control/browsers/work`. Sign in to what the agen
 | `type "<label>" <text> [role]` | Type with real key events. |
 | `key <name> ["<label>"]` | Press `return`, `tab`, `escape`, an arrow, or a chord such as `cmd+a`. |
 | `click <x> <y>` | Click a pixel of the window's capture, for something with no label. |
-| `open <url>` | Open the address in a new tab of the kept window, in the background. |
-| `close-tab "<title>"` | Close the one tab with that title. |
+| `open <url>` | Open the address in a new tab of the kept window, in the background. With a kept tab, load it in that tab. |
+| `close-tab ["<title>"]` | Close the one tab with that title. With a kept tab, take no title and close that tab. |
 | `key-to-env <NAME> '<regex>'` | Write the one text on the page that matches into `.env` as `NAME`, without printing it. |
 | `launch <name> [url]` | Start a browser of the tool's own in the background. |
 | `profiles` | List Chrome's profile folders, their names and the account signed in to each. Pick `OWNER_CHROME_PROFILE` from it by the account, not by the name. |
@@ -157,7 +158,10 @@ In Claude Code you can allow reads without a prompt and keep a prompt for action
 ```
 
 **Several agents at once:**
-- Give each agent its own session: `CHROME_CONTROL_SESSION=agent-2`. A session keeps one window, and `use` refuses a window another session keeps.
+- Give each agent its own session: `CHROME_CONTROL_SESSION=agent-2`. A wrapper script must set it too; with no name, a command runs as the session `default`.
+- To share one window, each session runs `tab <window id> [url]`. Chrome's accessibility tree holds only a window's active tab, so one command at a time shows its session's tab, checks that the tree holds that tab's page, acts, and puts the previous tab back. Commands from different sessions wait for each other (at most 60 s), and a `wait` lets others run between its polls.
+- A window kept whole with `use` and a window with tabs of other sessions exclude each other, because `use` works in whatever tab is active.
+- To keep a whole window instead, use `use <id>`: it refuses a window another session keeps.
 - Or give each agent its own browser: `launch agent-2`, then `CHROME_CONTROL_BROWSER=agent-2`. This is the route where typing and background page opens work, since each browser has one window.
 - Acting commands in one Chrome run one at a time. A command waits up to 30 seconds for the one before it.
 

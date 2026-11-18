@@ -1,6 +1,6 @@
 {
   "name": "chrome-control",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Drive Chrome on macOS from a script or an AI agent, in the background and for few tokens, through Accessibility: no extension, no debugging port, no copied cookies. An alternative to Claude in Chrome.",
   "license": "MIT",

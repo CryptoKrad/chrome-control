@@ -2,13 +2,13 @@
 // once, never fills a secret field, stops at a password or passkey prompt, writes a key into .env only when exactly one
 // text on the page is that key, refuses to act on a tree Chrome has not updated, opens a page only in a new tab of the
 // kept window and never puts an app back in front. It prints a page as short lines and an action as what it changed,
-// refuses a window Chrome treats as hidden, and keeps one window for one session.
+// refuses a window Chrome treats as hidden, and keeps one window or one tab for one session.
 import test from "node:test";
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { windowOf, keptWindow, elementOf, withoutColumns, onlyMatch, withEnv, tabOf, OWNER_STEP, ownChrome, pageOf, sameTitle, rowOf, ofProfile, profileOf, staleOf, stillStale, suggestionOf, searchBoxOf, profilesOf, oneLine, compact, changed, covered, claim, lock, FLAG, USAGE } from "./chrome-control.mjs";
+import { stripOf, eventWindowOf, holdsPage, tabClaims, windowOf, keptWindow, elementOf, withoutColumns, onlyMatch, withEnv, tabOf, OWNER_STEP, ownChrome, pageOf, sameTitle, rowOf, ofProfile, profileOf, staleOf, stillStale, suggestionOf, searchBoxOf, profilesOf, oneLine, compact, changed, covered, claim, lock, FLAG, USAGE } from "./chrome-control.mjs";
 
 const src = readFileSync(new URL("./chrome-control.mjs", import.meta.url), "utf8");
 const tree = [
@@ -137,10 +137,10 @@ test("open reaches only your own Chrome by pid, as a new tab of the kept window;
   assert.equal(suggestionOf('      - [3] AXStaticText = "https://example.com, 1 of 2" [actions=[press,showmenu]]', "https://example.com/"), 3);   // a bare origin is listed without its slash
   assert.equal(suggestionOf(`${list}\n${list}`, "http://127.0.0.1:8765/index.html"), null);   // offered twice: none
   assert.equal(suggestionOf(list.replace(/press,/g, ""), "http://127.0.0.1:8765/index.html"), null);
-  assert.match(src, /const row = \/AXWebArea "Omnibox Popup"\/\.test\(list\.tree_markdown \?\? ""\) \? suggestionOf\(list\.tree_markdown, a\) : null;/);
-  assert.match(src, /if \(rows\.length === 1\) cua\("click", \{ \.\.\.rows\[0\], action: "press" \}\);\n    else if \(/);
-  assert.match(src, /if \(bar === null \|\| titleOf\(s\) !== "New Tab"\) \{[^\n]*process\.exit\(1\)/);
-  assert.match(src, /const id = appleEvent\("id", t\.pid, "New Tab"\), r = \/\^\\d\+\$\/\.test\(id\) \? appleEvent\("go", t\.pid, id, a\) : id;/);   // the last resort, said when taken
+  assert.match(src, /const row = \/AXWebArea "Omnibox Popup"\/\.test\(list\.tree_markdown \?\? ""\) \? suggestionOf\(list\.tree_markdown, url\) : null;/);
+  assert.match(src, /if \(rows\.length === 1\) cua\("click", \{ \.\.\.rows\[0\], action: "press" \}\);\n\s+else if \(/);
+  assert.match(src, /if \(bar === null \|\| \(!own && titleOf\(s\) !== "New Tab"\)\) \{[^\n]*return 1/);
+  assert.match(src, /const id = own\?\.win \?\? known\?\.id \?\? appleEvent\("id", t\.pid, "New Tab"\), r = own \? appleEvent\("goTab", t\.pid, id, own\.tab, url\) : \/\^\\d\+\$\/\.test\(id\) \? appleEvent\("go", t\.pid, id, url\) : id;/);   // by ids when known, so several windows titled New Tab do not stop it
   assert.match(src, /applicationWithProcessIdentifier\(Number\(pid\)\)/);
   assert.match(src, /if \(hits\.length !== 1\) return/);
   assert.match(src, /if \(!String\(ObjC\.unwrap\(tab\.valueForKey\("URL"\)\)\)\.startsWith\("chrome:\/\/newtab"\)\) return/);   // only a new tab is navigated
@@ -311,7 +311,9 @@ test("a window is one session's: a second session is refused it until the first 
   assert.equal(typeof again, "function");
   writeFileSync(path.join(dir, "4242.lock", "pid"), "999999999");   // a holder that is gone
   assert.equal(typeof lock(dir, 4242, 0), "function");
-  assert.match(src, /const free = lock\(CLAIMS, t\.pid\);\n    if \(!free\) \{[^\n]*process\.exit\(1\); \}\n    process\.on\("exit", free\);/);
+  assert.match(src, /const hold = \(pid, wait\) => \{ free = lock\(CLAIMS, pid, wait\); if \(!free\) refuse/);   // one acting command at a time
+  assert.match(src, /process\.on\("exit", leave\)/);
+  assert.match(src, /else if \(\["press", "fill", "type", "key", "click", "open", "close-tab"\]\.includes\(cmd\)\) hold\(t\.pid, 30\)/);
   assert.match(src, /if \(other && \(other\.session !== session \|\| other\.cwd !== me\.cwd\)\) \{[^\n]*process\.exit\(1\); \}/);
   assert.ok(src.includes('const KEPT = session === "default" && !browser ? state : state.replace(/\\.json$/, `${browser && `.browser-${browser}`}${session === "default" ? "" : `.${session}`}.json`);'));   // a kept window is a session's, in one browser
 });
@@ -334,7 +336,7 @@ test("with several windows, open tries the new tab page's search box before the 
   const history = '      - [7] AXStaticText = "dash.example.com, press Tab then Enter to Remove Suggestion., 1 of 8" [actions=[press,showmenu,scrolltovisible]]';
   assert.equal(suggestionOf(history, "dash.example.com"), 7);
   assert.equal(suggestionOf(history, "dash.example"), null);   // a shorter address is never matched by a prefix
-  const box = src.indexOf("const box = searchBoxOf(s.tree_markdown)"), event = src.indexOf('appleEvent("id", t.pid, "New Tab")');
+  const box = src.indexOf("const box = !own"), event = src.indexOf('appleEvent("id", t.pid, "New Tab")');
   assert.ok(box > 0 && event > box, "the search box comes first, the Apple Event last");
 });
 
@@ -342,4 +344,71 @@ test("profiles names each folder with the account signed in to it, so the profil
   const cache = { Default: { name: "Person 1" }, "Profile 1": { name: "Work", user_name: "sam@example.com" }, "Profile 2": { name: "Home", user_name: "" } };
   assert.deepEqual(profilesOf(cache), ["Default | Person 1 | -", "Profile 1 | Work | sam@example.com", "Profile 2 | Home | -"]);
   assert.deepEqual(profilesOf(undefined), []);
+});
+
+// One tab for each session (measured 2026-11-18, docs/research/tabs-2026-11-18.md): Accessibility reads only a window's
+// active tab, so a tab session's command shows its own tab under the lock, checks the page, acts and puts the tab back.
+const stripTree = [
+  '- [0] AXWindow "Docs - Google Chrome - Sam (Work)"',
+  '  - [3] AXRadioButton "Docs - Memory usage - 80 MB" [actions=[press]]',
+  '    - [4] AXButton "Close" [actions=[press]]',
+  '  - [5] AXRadioButton "New Tab"',
+  '  - [9] AXWebArea "Docs"',
+  '    - [10] AXRadioButton "Monthly" [actions=[press]]',
+  '  - [11] AXRadioButton "Mail - Inactive tab - 12 MB freed up"',
+].join("\n");
+
+test("the tab strip is read in order, without the page's own radio buttons or Chrome's notes", () => {
+  assert.deepEqual(stripOf(stripTree), [{ index: 3, title: "Docs" }, { index: 5, title: "New Tab" }, { index: 11, title: "Mail" }]);
+  assert.deepEqual(stripOf(`${stripTree}\n  - [20] AXWebArea "Side panel"\n    - [21] AXRadioButton "Option"`).length, 3, "a side panel's buttons are not tabs");
+  assert.equal(pageOf("Docs - Inactive tab - 52.8 MB freed up - Google Chrome - Sam (Work)"), "Docs");
+});
+
+test("a window is matched to Apple Events by title and tabs, and two that look the same are refused", () => {
+  const strip = stripOf(stripTree), tabs = [{ id: "1", title: "Docs" }, { id: "2", title: "New Tab" }, { id: "3", title: "Mail" }];
+  const same = { id: "w1", name: "Docs", tabs }, other = { id: "w2", name: "Docs", tabs: tabs.slice(0, 2) };
+  assert.equal(eventWindowOf([same, other], "Docs", strip).id, "w1");
+  assert.equal(eventWindowOf([same, { ...same, id: "w3" }], "Docs", strip), null, "never a guess between two equal windows");
+  assert.equal(eventWindowOf([other], "Docs", strip), null);
+});
+
+test("a command acts in its tab only when the tree holds that tab's page", () => {
+  assert.equal(holdsPage(stripTree, "Docs"), true);
+  assert.equal(holdsPage(stripTree, "Mail"), false, "another tab's tree is not this tab's");
+  assert.equal(holdsPage('- [0] AXWindow "x"', "Docs"), false, "an unloaded tab has no page");
+  assert.equal(holdsPage('  - [1] AXWebArea "Token"', "Token Sale"), false, "a title that only begins the same is another page");
+  const untitled = '  - [4] AXTextField "Address and search bar" = "example.com/a"\n  - [9] AXWebArea ""';
+  assert.equal(holdsPage(untitled, "x", "https://example.com/a"), true);
+  assert.equal(holdsPage(untitled, "x", "https://example.com/b"), false, "an untitled page is told by its address");
+});
+
+test("tab claims are read per Chrome, and one session's tab refuses another's", () => {
+  const dir = mkdtempSync(path.join(tmpdir(), "cc-tabs-")), a = { session: "a", cwd: "/x", window_id: 7 }, b = { session: "b", cwd: "/y", window_id: 7 };
+  try {
+    assert.equal(claim(dir, "9-tab-101", a), null);
+    assert.equal(claim(dir, "9-tab-102", b), null);
+    assert.equal(claim(dir, "8-tab-103", b), null);
+    assert.equal(claim(dir, "9-tab-101", b).session, "a");
+    assert.deepEqual(tabClaims(dir, 9).map((c) => [c.tab_id, c.session]).sort(), [["101", "a"], ["102", "b"]]);
+    assert.deepEqual(tabClaims(path.join(dir, "none"), 9), []);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test("a link whose label its own text repeats is one element, and two separate links stay refused", () => {
+  const link = ['  - [5] AXLink "Admin" [actions=[press]]', '    - [6] AXStaticText = "Admin" [actions=[press]]'].join("\n");
+  assert.equal(elementOf(link, "Admin"), 5);
+  assert.equal(elementOf(`${link}\n${link.replace("[5]", "[7]").replace("[6]", "[8]")}`, "Admin"), null);
+});
+
+test("a tab session holds the lock from showing its tab to putting it back, and frees the window while it waits", () => {
+  assert.match(src, /if \(myTab\) hold\(t\.pid, 60\);/);
+  assert.match(src, /let s = myTab \? enter\(\) : snapshot\(t\)/);
+  assert.match(src, /if \(holdsPage\(oneLine\(now\.tree_markdown \?\? ""\), r\.title, r\.url\)\) return snapshot\(t\)/);
+  assert.match(src, /if \(myTab\) \{ leave\(\); sleep\(2\); hold\(t\.pid, 60\); s = enter\(\); \}/);
+  assert.match(src, /if \(prev && prev !== tab\) appleEvent\("show", pid, win, prev\)/);
+  assert.match(src, /has tabs of session \$\{c\.session\}/, "a session without a tab is refused a window that has other sessions' tabs");
+  assert.match(src, /other tabs are not its to close/);
+  assert.match(src, /const box = !own \|\| titleOf\(s\) === "New Tab" \? searchBoxOf/, "a kept tab's own form field never receives the address");
+  assert.ok(src.indexOf('shown = { pid: t.pid, win: win.id, prev: win.active, tab: null }') < src.indexOf('element_index: add'), "the previous tab is due back before the click");
+  assert.ok(src.indexOf('claim(CLAIMS, `${t.pid}-tab-${now[0].id}`') < src.indexOf('letGo();   // the old claim goes only once the new one holds'), "a refused claim keeps the old one");
 });

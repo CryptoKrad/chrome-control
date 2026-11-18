@@ -3,7 +3,7 @@
 // you have in front, for few tokens: the page prints as short lines, and an action prints only what it changed.
 // Nothing is copied out of the profile and no debugging port is opened. Rules and measurements: README.md, docs/research.
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 
@@ -13,6 +13,7 @@ const BROWSERS = path.join(process.env.CHROME_CONTROL_HOME || path.join(homedir(
 export const USAGE = `chrome-control <command> [--session <name>] [--browser <name>]
   windows                      the profile's windows: id, title, who keeps it
   use <id> [--take]            keep that window for this session; release gives it back
+  tab <id> [url]               a new tab of this session in that window: every command then works in that tab, and other sessions can keep their own tabs there
   read [lines] [--ui] [--raw]  the page as short lines (60); --ui: toolbar, tabs, extension buttons; --raw: the full tree
   find "<text>"                the lines that hold the text
   wait "<text>" [seconds]      poll until the page holds the text (20 s; exit 4 when it does not)
@@ -20,8 +21,8 @@ export const USAGE = `chrome-control <command> [--session <name>] [--browser <na
   fill "<label>" <text> [role] set a field's value (fires input and change)
   type "<label>" <text> [role] type with real key events; key <name> ["<label>"] presses return, tab, escape, cmd+a ...
   click <x> <y>                click a pixel of the window's capture
-  open <url>                   open in a new tab, in the background (several windows: through the new tab page's search box)
-  close-tab "<title>"          close the one tab of that title
+  open <url>                   open in a new tab, in the background (several windows: through the new tab page's search box); with a kept tab, load it there
+  close-tab ["<title>"]        close the one tab of that title; with a kept tab, close that tab and no other
   key-to-env <NAME> '<regex>'  write the one matching text on the page into .env, unprinted
   launch <name> [url]          start a Chrome of the tool's own in the background, on an empty profile; --browser <name> works in it
   profiles                     Chrome's profile folders, names and signed-in accounts: pick OWNER_CHROME_PROFILE from it
@@ -67,8 +68,10 @@ export function ownChrome(procs) {
   return own.length === 1 ? own[0].pid : null;
 }
 
+const TAB_NOTE = / - (?:Memory usage|Inactive tab) - .*$/;   // Chrome adds these to a tab's name, and for a moment to the window's
+
 /** The page title in a Chrome window's accessibility title ("<page> - Google Chrome - <person> (<profile>)"). */
-export const pageOf = (windowTitle) => { const i = windowTitle.lastIndexOf(" - Google Chrome"); return i < 0 ? windowTitle : windowTitle.slice(0, i); };
+export const pageOf = (windowTitle) => { const i = windowTitle.lastIndexOf(" - Google Chrome"); return (i < 0 ? windowTitle : windowTitle.slice(0, i)).replace(TAB_NOTE, ""); };
 
 /** The tab's title and the page title the tree holds, when the two disagree: Chrome treats a page as hidden while its
  *  window sits fully under another window of the same Chrome, and stops updating its tree, while the tab's title goes on
@@ -98,8 +101,22 @@ export function sameTitle(name, full) {
 
 const OPEN = `ObjC.import("ScriptingBridge");
 ${sameTitle.toString()}
-function run([mode, pid, key, url]) {
+function run([mode, pid, key, url, to]) {
   const app = $.SBApplication.applicationWithProcessIdentifier(Number(pid)), ws = app.valueForKey("windows"), hits = [];
+  const text = (o, k) => String(ObjC.unwrap(o.valueForKey(k)));
+  const tabsOf = (w) => { const ts = w.valueForKey("tabs"), out = []; for (let i = 0; i < ts.count; i++) out.push(ts.objectAtIndex(i)); return out; };
+  if (mode === "tabs") { const out = []; for (let i = 0; i < ws.count; i++) { const w = ws.objectAtIndex(i); out.push({ id: text(w, "id"), name: text(w, "name"), active: text(w.valueForKey("activeTab"), "id"), tabs: tabsOf(w).map((t) => ({ id: text(t, "id"), title: text(t, "title"), url: text(t, "URL") })) }); } return JSON.stringify(out); }
+  if (mode === "show" || mode === "goTab") {   // key: the window's id, url: the tab's id. Setting the active index stays in the background; setting an address brings Chrome forward (both measured 2026-11-18)
+    for (let i = 0; i < ws.count; i++) { const w = ws.objectAtIndex(i); if (text(w, "id") !== key) continue;
+      const ts = tabsOf(w), at = ts.findIndex((t) => text(t, "id") === url);
+      if (at < 0) break;
+      if (mode === "goTab") { ts[at].setValueForKey($(to), "URL"); return "opened"; }
+      const prev = text(w.valueForKey("activeTab"), "id");
+      if (prev !== url) w.setValueForKey($(at + 1), "activeTabIndex");
+      return JSON.stringify({ prev, index: at + 1, title: text(ts[at], "title"), url: text(ts[at], "URL") });
+    }
+    return mode === "show" ? "{}" : "that tab is gone; nothing opened";
+  }
   for (let i = 0; i < ws.count; i++) {
     const w = ws.objectAtIndex(i);
     if (mode === "id" ? sameTitle(String(ObjC.unwrap(w.valueForKey("name"))), key) : String(ObjC.unwrap(w.valueForKey("id"))) === key) hits.push(w);
@@ -131,7 +148,11 @@ export function elementOf(markdown, label, role = "") {
     return want ? m[2].startsWith(` "${label}"`) || m[2].startsWith(` = "${label}"`) : l.includes(`"${label}"`);   // a combo box may show only its value
   });
   const one = hits.length === 1 ? hits : hits.filter((l) => /actions=\[[^\]]*press/.test(l));   // a list option repeats its text in a child that cannot be pressed
-  return one.length === 1 ? Number(/\[(\d+)\]/.exec(one[0])[1]) : null;
+  if (one.length === 1) return Number(/\[(\d+)\]/.exec(one[0])[1]);
+  const L = withoutColumns(markdown), depth = (l) => l.search(/\S/), from = L.indexOf(hits[0]);   // a link's label repeated by the texts inside it is one element: the outermost
+  let end = from + 1;
+  while (from >= 0 && end < L.length && depth(L[end]) > depth(L[from])) end++;
+  return hits.length > 1 && /\] AX(Link|Button)\b/.test(hits[0]) && hits.every((l, i) => !i || (L.slice(from + 1, end).includes(l) && /\] AX(StaticText|Heading|Image)\b/.test(l))) ? Number(/\[(\d+)\]/.exec(hits[0])[1]) : null;
 }
 
 /** The suggestion that is exactly the address typed: Chrome lists it as "<address>, 1 of 2", a bare origin without its
@@ -177,6 +198,43 @@ export function rowOf(markdown, text) {
 export function tabOf(markdown, title) {
   const hits = markdown.split("\n").filter((l) => [" - Memory usage", " - Inactive tab"].some((s) => l.includes(`AXRadioButton "${title}${s}`)));
   return hits.length === 1 ? Number(/\[(\d+)\]/.exec(hits[0])[1]) : null;
+}
+
+/** The tab strip's entries in their order, as { index, title }: the window's radio buttons outside the page. */
+export function stripOf(markdown) {
+  const out = [], depth = (l) => l.search(/\S/);
+  let skip = -1;   // inside a web area: the page's, or a side panel's
+  for (const l of markdown.split("\n")) {
+    if (skip >= 0 && depth(l) > skip) continue;
+    skip = /\] AXWebArea/.test(l) ? depth(l) : -1;
+    const m = /\[(\d+)\] AXRadioButton "([^"]*)"/.exec(l);
+    if (m) out.push({ index: Number(m[1]), title: m[2].replace(TAB_NOTE, "") });
+  }
+  return out;
+}
+
+/** The Apple Events window that is this accessibility window. The two share no id, and Chrome's windows can share a
+ *  title and a frame, so it is the one with this page's title and this strip of tabs; null when none or several. */
+export function eventWindowOf(windows, page, strip) {
+  const same = (a, b) => a === b || sameTitle(a, b) || sameTitle(b, a);
+  const hits = windows.filter((w) => same(w.name, page) && w.tabs.length === strip.length && w.tabs.every((t, i) => same(t.title, strip[i].title) || !t.title || !strip[i].title));
+  return hits.length === 1 ? hits[0] : null;
+}
+
+/** Whether the tree holds this tab's page: the check that a command is about to act in its own tab. A title that only
+ *  begins the same ("Token", "Token Sale") is another page. A page with no title is told by the address bar. */
+export function holdsPage(markdown, title, url = "") {
+  const page = /AXWebArea "([^"]*)"/.exec(markdown.split("\n").find((l) => /\] AXWebArea/.test(l)) ?? "")?.[1];
+  if (page === undefined) return false;
+  if (page) return page === title || sameTitle(page, title) || sameTitle(title, page);
+  const bar = /AXTextField "Address and search bar" = "([^"]*)"/.exec(markdown)?.[1];
+  return Boolean(bar) && url.replace(/^https?:\/\/(www\.)?/, "").startsWith(bar.replace(/^https?:\/\/(www\.)?/, ""));
+}
+
+/** The tab claims of one Chrome, as { tab_id, window_id, session, cwd }. */
+export function tabClaims(dir, pid) {
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).flatMap((f) => { const m = new RegExp(`^${pid}-tab-(\\d+)\\.json$`).exec(f); return m ? [{ tab_id: m[1], ...JSON.parse(readFileSync(path.join(dir, f), "utf8")) }] : []; });
 }
 
 /** The one quoted text on the page that matches `re` whole; a page with none or several gives null. */
@@ -262,7 +320,9 @@ const sleep = (s) => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0
 export function claim(dir, key, me, take = false) {
   mkdirSync(dir, { recursive: true });
   const file = path.join(dir, `${key}.json`);
-  try { writeFileSync(file, `${JSON.stringify(me)}\n`, { flag: take ? "w" : "wx" }); return null; } catch (e) { if (e.code !== "EEXIST") throw e; }
+  const draft = `${file}.${process.pid}.tmp`;   // whole or absent: another process may read the claim at any moment
+  writeFileSync(draft, `${JSON.stringify(me)}\n`);
+  try { if (take) renameSync(draft, file); else linkSync(draft, file); return null; } catch (e) { if (e.code !== "EEXIST") throw e; } finally { rmSync(draft, { force: true }); }
   const held = JSON.parse(readFileSync(file, "utf8"));
   return held.session === me.session && held.cwd === me.cwd ? null : held;
 }
@@ -380,6 +440,42 @@ function doctor(kept, browser) {
   console.log(`kept window ${w.window_id}: ${hidden === "covered" ? "covered by another Chrome window (hidden)" : hidden === "off" ? "not on the screen" : "live"}${stale ? `, tree old ("${stale.page}")` : ""}`);
 }
 
+/** Loads an address, in the background when Chrome allows it. `own` is the session's tab; without it, a new tab is opened
+ *  first. Returns the exit code. */
+function goTo(t, start, url, own) {
+  const here = { pid: t.pid, window_id: t.window_id };
+  let s = start, known = null;
+  if (!own) {
+    try { known = eventWindowOf(JSON.parse(appleEvent("tabs", t.pid)), titleOf(s), stripOf(s.tree_markdown)); } catch { /* the title rule below still applies */ }   // found before the new tab makes this window one more "New Tab"
+    const tab = elementOf(s.tree_markdown, "New Tab", "AXButton");
+    if (tab === null) { console.log("no single New Tab button in the window"); return 1; }
+    cua("click", { ...here, element_index: tab, snapshot_id: s.snapshot_id, action: "press" }); sleep(2); s = snapshot(t);
+  }
+  const bar = elementOf(s.tree_markdown, "Address and search bar", "AXTextField");
+  if (bar === null || (!own && titleOf(s) !== "New Tab")) { console.log("the new tab did not open; nothing opened"); return 1; }
+  cua("set_value", { ...here, element_index: bar, snapshot_id: s.snapshot_id, value: url }); sleep(1.5);
+  const rows = (cua("list_windows", { pid: t.pid }).windows ?? []).filter((x) => x.is_on_screen && !x.title).flatMap((x) => {   // the suggestions are a window of their own
+    const list = cua("get_window_state", { pid: t.pid, window_id: x.window_id, include_screenshot: false, max_elements: 60 });
+    const row = /AXWebArea "Omnibox Popup"/.test(list.tree_markdown ?? "") ? suggestionOf(list.tree_markdown, url) : null;
+    return row === null ? [] : [{ pid: t.pid, window_id: x.window_id, snapshot_id: list.snapshot_id, element_index: row }];
+  });
+  let how = "in the background";
+  if (rows.length === 1) cua("click", { ...rows[0], action: "press" });
+  else if (((r) => r.effect === "refused" || r.code)(cua("press_key", { ...here, element_index: bar, snapshot_id: s.snapshot_id, key: "return" }))) {   // several windows: no list shows and Return is refused
+    // first the new tab page's own search box: it lists the address as a row of the page, pressed in the background (measured 2026-11-17, 10 windows)
+    s = snapshot(t); const box = !own || titleOf(s) === "New Tab" ? searchBoxOf(s.tree_markdown) : null;   // on any other page a text area is that page's own field
+    if (box !== null) { cua("set_value", { ...here, element_index: box, snapshot_id: s.snapshot_id, value: url }); sleep(1.5); s = snapshot(t); }
+    const row = box === null ? null : suggestionOf(s.tree_markdown, url);
+    if (row !== null) { cua("click", { ...here, element_index: row, snapshot_id: s.snapshot_id, action: "press" }); how = "from the new tab's search box, in the background"; }
+    else {   // last: an Apple Event to this Chrome's pid, which brings it forward. By the window's and tab's ids when known, so several windows titled New Tab do not stop it
+      const id = own?.win ?? known?.id ?? appleEvent("id", t.pid, "New Tab"), r = own ? appleEvent("goTab", t.pid, id, own.tab, url) : /^\d+$/.test(id) ? appleEvent("go", t.pid, id, url) : id;
+      if (r !== "opened") { console.log(`${r}${own ? "" : " (a new tab was left open)"}`); return 1; }
+      how = "by an Apple Event, which brought Chrome forward";
+    }
+  }
+  sleep(7); s = snapshot(t); console.log(`opened ${how}`); head(t, s); return 0;
+}
+
 export function main(argv = process.argv.slice(2), { envFile = path.join(process.cwd(), ".env"), state = path.join(process.cwd(), ".local", "chrome-control.json") } = {}) {
   process.on("uncaughtException", (e) => { console.log(e.message.split("\n")[0]); process.exit(1); });   // a refusal is one line, not a stack
   try { process.loadEnvFile(envFile); } catch { /* no .env */ }
@@ -409,14 +505,57 @@ export function main(argv = process.argv.slice(2), { envFile = path.join(process
     process.exit(r.pid ? 0 : 1);
   }
   const holder = (pid, id) => { const f = path.join(CLAIMS, `${pid}-${id}.json`); return existsSync(f) ? JSON.parse(readFileSync(f, "utf8")) : null; };
-  if (cmd === "windows" || cmd === "use" || cmd === "release") {
+  const tabFile = (pid, id) => path.join(CLAIMS, `${pid}-tab-${id}.json`), mine = (h) => h.session === session && h.cwd === me.cwd;
+  const eventWindows = (pid) => JSON.parse(appleEvent("tabs", pid));
+  /** The tab claims of this Chrome whose tab is still open; a closed tab's claim is dropped. */
+  const liveTabs = (pid) => { const open = new Set(eventWindows(pid).flatMap((w) => w.tabs.map((x) => x.id))); return tabClaims(CLAIMS, pid).filter((c) => open.has(c.tab_id) || (rmSync(tabFile(pid, c.tab_id), { force: true }), false)); };
+  const letGo = () => {   // this session's claim, of a window or of a tab
+    if (!kept) return;
+    if (kept.tab_id) { rmSync(tabFile(kept.pid, kept.tab_id), { force: true }); return; }
+    const h = holder(kept.pid, kept.window_id); if (h && mine(h)) rmSync(path.join(CLAIMS, `${kept.pid}-${kept.window_id}.json`), { force: true });
+  };
+  const refuse = (text, code = 1) => { console.log(text); process.exit(code); };
+  let free = null, shown = null;   // shown: the session's tab is on show, and which tab goes back when the command ends
+  const hold = (pid, wait) => { free = lock(CLAIMS, pid, wait); if (!free) refuse(`another chrome-control command has been acting in this Chrome for ${wait} s; nothing done`); };
+  const leave = () => {
+    try { if (shown) { const { pid, win, prev, tab } = shown; shown = null; if (prev && prev !== tab) appleEvent("show", pid, win, prev); } }
+    catch (e) { console.log(`the previous tab was not put back: ${e.message.split("\n")[0]}`); }
+    finally { if (free) { free(); free = null; } }
+  };
+  process.on("exit", leave);
+  if (cmd === "windows" || cmd === "use" || cmd === "release" || cmd === "tab") {
     const p = profileWindows(browser);
-    if (cmd === "windows") { p.windows.forEach((w) => { const h = holder(p.pid, w.window_id); console.log(w.window_id, w.title, h ? `[kept by ${h.session}]` : ""); }); process.exit(0); }
-    if (kept) { const h = holder(kept.pid, kept.window_id); if (h && h.session === session && h.cwd === me.cwd) rmSync(path.join(CLAIMS, `${kept.pid}-${kept.window_id}.json`), { force: true }); }
-    if (cmd === "release") { rmSync(KEPT, { force: true }); console.log(kept ? `released window ${kept.window_id}` : "no kept window"); process.exit(0); }
+    if (cmd === "windows") { const tabs = liveTabs(p.pid); p.windows.forEach((w) => { const h = holder(p.pid, w.window_id), here = tabs.filter((c) => c.window_id === w.window_id).map((c) => `${c.session} (tab ${c.tab_id})`); console.log(w.window_id, w.title, h ? `[kept by ${h.session}]` : "", here.length ? `[tabs: ${here.join(", ")}]` : ""); }); process.exit(0); }
+    if (cmd === "release") { letGo(); rmSync(KEPT, { force: true }); console.log(!kept ? "no kept window" : kept.tab_id ? `released tab ${kept.tab_id}; it stays open` : `released window ${kept.window_id}`); process.exit(0); }
     if (!p.windows.some((w) => w.window_id === Number(a))) { console.log(`window ${a} is not a window of ${p.dir}; see \`windows\``); process.exit(1); }
+    hold(p.pid, 60);   // the checks and the claim are one step
+    const others = liveTabs(p.pid).filter((c) => c.window_id === Number(a) && !mine(c));
+    if (cmd === "tab") {
+      const h = holder(p.pid, Number(a));
+      if (h && !mine(h)) refuse(`window ${a} is kept whole by session ${h.session} (${h.cwd}); \`release\` there, or pick another window`);
+      if (h) refuse(`this session keeps window ${a} whole; \`release\` first`);
+      const t = { ...p, window_id: Number(a) }, here = { pid: t.pid, window_id: t.window_id }, s = snapshot(t);
+      const win = eventWindowOf(eventWindows(t.pid), titleOf(s), stripOf(s.tree_markdown));
+      if (!win) refuse(`window ${a} cannot be told from another window with the same title and tabs; open a page in it first`);
+      const add = elementOf(s.tree_markdown, "New Tab", "AXButton");
+      if (add === null) refuse("no single New Tab button in the window");
+      shown = { pid: t.pid, win: win.id, prev: win.active, tab: null };   // from the click on, the previous tab goes back whatever happens
+      cua("click", { ...here, element_index: add, snapshot_id: s.snapshot_id, action: "press" }); sleep(2);
+      const had = new Set(win.tabs.map((x) => x.id)), now = eventWindows(t.pid).find((w) => w.id === win.id)?.tabs.filter((x) => !had.has(x.id)) ?? [];
+      if (now.length !== 1) refuse("the new tab could not be told from the others; nothing kept, and a new tab may be open");
+      if (claim(CLAIMS, `${t.pid}-tab-${now[0].id}`, { ...me, window_id: t.window_id })) refuse("that tab is already kept");
+      letGo();   // the old claim goes only once the new one holds
+      mkdirSync(path.dirname(KEPT), { recursive: true });
+      writeFileSync(KEPT, `${JSON.stringify({ pid: t.pid, window_id: t.window_id, tab_id: now[0].id, event_window: win.id })}\n`);
+      shown.tab = now[0].id;
+      console.log(`kept tab ${now[0].id} in window ${a}`);
+      if (!b) process.exit(0);
+      process.exit(goTo(t, snapshot(t), b, { win: win.id, tab: now[0].id }));
+    }
+    if (others.length) refuse(`window ${a} has tabs of session ${others[0].session}; keep a tab of your own: \`tab ${a}\``);
     const held = claim(CLAIMS, `${p.pid}-${a}`, me, flags.has("--take"));
     if (held) { console.log(`window ${a} is kept by session ${held.session} (${held.cwd}); \`release\` there, or \`use ${a} --take\``); process.exit(1); }
+    if (kept && (kept.tab_id || kept.pid !== p.pid || kept.window_id !== Number(a))) letGo();   // the old claim goes only once the new one holds
     mkdirSync(path.dirname(KEPT), { recursive: true });
     writeFileSync(KEPT, `${JSON.stringify({ pid: p.pid, window_id: Number(a) })}\n`);
     console.log(`kept window ${a}`); process.exit(0);
@@ -425,45 +564,32 @@ export function main(argv = process.argv.slice(2), { envFile = path.join(process
   if (!w) throw new Error(`no kept window, and not one single window, of ${p.dir}: run \`windows\`, then \`use <id>\` (the tool never opens a window: that takes the screen)`);
   const t = { ...p, window_id: w.window_id }, other = holder(t.pid, t.window_id);
   if (other && (other.session !== session || other.cwd !== me.cwd)) { console.log(`window ${t.window_id} is kept by session ${other.session} (${other.cwd}); \`windows\`, then \`use <id>\``); process.exit(1); }
-  if (["press", "fill", "type", "key", "click", "open", "close-tab"].includes(cmd)) {
-    const free = lock(CLAIMS, t.pid);
-    if (!free) { console.log("another chrome-control command has been acting in this Chrome for 30 s; nothing done"); process.exit(1); }
-    process.on("exit", free);
-  }
-  let s = snapshot(t), stale = staleOf(s.tree_markdown);
+  const myTab = kept?.tab_id && kept.pid === t.pid && kept.window_id === t.window_id ? kept : null;
+  if (!myTab) { const c = tabClaims(CLAIMS, t.pid).find((x) => x.window_id === t.window_id && !mine(x)); if (c && liveTabs(t.pid).some((x) => x.tab_id === c.tab_id)) refuse(`window ${t.window_id} has tabs of session ${c.session}: the active tab there can change between commands. Keep a tab of your own: \`tab ${t.window_id}\``); }
+  /** Puts this session's tab on show and waits for its page. Accessibility reads only a window's active tab, so every
+   *  command of a tab session holds the lock from here until its tab has been put back: no other session's command
+   *  runs in between, and no command acts on a tab it did not check. */
+  let shownTab = null;
+  const enter = () => {
+    for (let waited = 0; ; waited += 1) {
+      const r = JSON.parse(appleEvent("show", t.pid, myTab.event_window, myTab.tab_id));
+      if (!r.title && r.index === undefined) { rmSync(tabFile(t.pid, myTab.tab_id), { force: true }); rmSync(KEPT, { force: true }); refuse(`tab ${myTab.tab_id} is closed; \`tab ${t.window_id}\` makes a new one`); }
+      shown ??= { pid: t.pid, win: myTab.event_window, prev: r.prev, tab: myTab.tab_id }; shownTab = r;
+      sleep(0.5);
+      const now = cua("get_window_state", { pid: t.pid, window_id: t.window_id, include_screenshot: false, max_elements: 4000 });
+      if (holdsPage(oneLine(now.tree_markdown ?? ""), r.title, r.url)) return snapshot(t);
+      if (waited >= 10) { if (cmd === "press" && a === "Reload") return snapshot(t); refuse(`tab ${myTab.tab_id} shows no page yet ("${r.title}"). Chrome may have unloaded it: \`press Reload button\`.`, 3); }
+    }
+  };
+  if (myTab) hold(t.pid, 60);
+  else if (["press", "fill", "type", "key", "click", "open", "close-tab"].includes(cmd)) hold(t.pid, 30);
+  let s = myTab ? enter() : snapshot(t), stale = staleOf(s.tree_markdown);
   if (stale) { sleep(1); s = snapshot(t); stale = stillStale(stale, staleOf(s.tree_markdown)); }
   const hidden = cmd === "open" ? null : hiddenOf(t), acts = ["press", "fill", "type", "key", "click", "key-to-env", "wait"].includes(cmd);
   if (hidden === "covered" && acts) { console.log(COVERED(t.window_id)); process.exit(3); }
   if (stale && acts) { console.log(STALE(stale)); process.exit(3); }   // an index or a value read off an old tree is a guess
   const was = { title: titleOf(s), address: addressOf(s), lines: compact(s.tree_markdown) }, here = { pid: t.pid, window_id: t.window_id };
-  if (cmd === "open") {   // a new tab, the address set in its bar, then Return. Once the bar lists suggestions, that list is a second window and Return is refused: its row for this very address is pressed. Both stay in the background (measured)
-    const tab = elementOf(s.tree_markdown, "New Tab", "AXButton");
-    if (tab === null) { console.log("no single New Tab button in the window"); process.exit(1); }
-    cua("click", { ...here, element_index: tab, snapshot_id: s.snapshot_id, action: "press" }); sleep(2); s = snapshot(t);
-    const bar = elementOf(s.tree_markdown, "Address and search bar", "AXTextField");
-    if (bar === null || titleOf(s) !== "New Tab") { console.log("the new tab did not open; nothing opened"); process.exit(1); }
-    cua("set_value", { ...here, element_index: bar, snapshot_id: s.snapshot_id, value: a }); sleep(1.5);
-    const rows = (cua("list_windows", { pid: t.pid }).windows ?? []).filter((x) => x.is_on_screen && !x.title).flatMap((x) => {   // the suggestions are a window of their own
-      const list = cua("get_window_state", { pid: t.pid, window_id: x.window_id, include_screenshot: false, max_elements: 60 });
-      const row = /AXWebArea "Omnibox Popup"/.test(list.tree_markdown ?? "") ? suggestionOf(list.tree_markdown, a) : null;
-      return row === null ? [] : [{ pid: t.pid, window_id: x.window_id, snapshot_id: list.snapshot_id, element_index: row }];
-    });
-    let how = "in the background";
-    if (rows.length === 1) cua("click", { ...rows[0], action: "press" });
-    else if (((r) => r.effect === "refused" || r.code)(cua("press_key", { ...here, element_index: bar, snapshot_id: s.snapshot_id, key: "return" }))) {   // several windows: no list shows and Return is refused
-      // first the new tab page's own search box: it lists the address as a row of the page, pressed in the background (measured 2026-11-17, 10 windows)
-      s = snapshot(t); const box = searchBoxOf(s.tree_markdown);
-      if (box !== null) { cua("set_value", { ...here, element_index: box, snapshot_id: s.snapshot_id, value: a }); sleep(1.5); s = snapshot(t); }
-      const row = box === null ? null : suggestionOf(s.tree_markdown, a);
-      if (row !== null) { cua("click", { ...here, element_index: row, snapshot_id: s.snapshot_id, action: "press" }); how = "from the new tab's search box, in the background"; }
-      else {   // last: an Apple Event to this Chrome's pid, which brings it forward (3 of 3 by pid) and needs one window titled New Tab
-        const id = appleEvent("id", t.pid, "New Tab"), r = /^\d+$/.test(id) ? appleEvent("go", t.pid, id, a) : id;
-        if (r !== "opened") { console.log(`${r} (a new tab was left open)`); process.exit(1); }
-        how = "by an Apple Event, which brought Chrome forward";
-      }
-    }
-    sleep(7); s = snapshot(t); console.log(`opened ${how}`); head(t, s); process.exit(0);
-  }
+  if (cmd === "open") process.exit(goTo(t, s, a, myTab ? { win: myTab.event_window, tab: myTab.tab_id } : null));
   if (cmd === "press" || cmd === "fill" || cmd === "type" || cmd === "key") {
     const label = cmd === "key" ? b : a, role = (cmd === "press" ? b : c) ?? "";
     const scope = cmd === "press" && c ? rowOf(s.tree_markdown, c) : s.tree_markdown;   // press "<label>" <role> "<row text>"
@@ -479,6 +605,15 @@ export function main(argv = process.argv.slice(2), { envFile = path.join(process
   if (cmd === "click") {
     cua("get_window_state", { ...here, include_accessibility_tree: false });   // pixels are read off this capture
     cua("click", { ...here, x: Number(a), y: Number(b) }); sleep(5); s = snapshot(t); report(t, was, s); process.exit(0);
+  }
+  if (cmd === "close-tab" && myTab) {   // the session's own tab, found by its place in the strip, and no other
+    if (a) refuse(`this session keeps tab ${myTab.tab_id}: \`close-tab\` with no title closes it, and other tabs are not its to close`);
+    const entry = stripOf(s.tree_markdown)[shownTab.index - 1], L = s.tree_markdown.split("\n"), at = entry ? L.findIndex((l) => l.includes(`[${entry.index}] AXRadioButton`)) : -1;
+    const close = /\[(\d+)\] AXButton "Close"/.exec(L[at + 1] ?? "");
+    if (!close) refuse("no Close button on this session's tab; nothing closed");
+    cua("click", { ...here, element_index: Number(close[1]), snapshot_id: s.snapshot_id, action: "press" });
+    rmSync(tabFile(t.pid, myTab.tab_id), { force: true }); rmSync(KEPT, { force: true });
+    console.log(`closed tab ${myTab.tab_id}`); process.exit(0);
   }
   if (cmd === "close-tab") {   // only the active tab shows its Close button: make it active, check the window's title, close
     let idx = tabOf(s.tree_markdown, a);
@@ -504,7 +639,7 @@ export function main(argv = process.argv.slice(2), { envFile = path.join(process
       const hits = holds();
       if (hits.length) { console.log(hits.slice(0, 5).join("\n")); process.exit(0); }
       if (waited >= limit) { console.log(`"${a}" is not on the page after ${limit} s`); process.exit(4); }
-      sleep(2); s = snapshot(t);
+      if (myTab) { leave(); sleep(2); hold(t.pid, 60); s = enter(); } else { sleep(2); s = snapshot(t); }   // between polls the window is free for other sessions
     }
   }
   if (hidden) console.log(hidden === "covered" ? COVERED(t.window_id, false) : OFF(t.window_id));
